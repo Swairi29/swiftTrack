@@ -21,6 +21,7 @@ import uuid
 import pika
 from flask import Flask, request, jsonify
 
+from auth import generate_token, require_auth
 from db import get_connection
 
 app = Flask(__name__)
@@ -36,19 +37,45 @@ def publish_event(routing_key, payload):
     connection.close()
 
 
+@app.route("/login", methods=["POST"])
+def login():
+    creds = request.get_json(force=True)
+    username = creds.get("username", "demo-user")
+    return jsonify({"token": generate_token(username)})
+
+
 @app.route("/orders", methods=["POST"])
+@require_auth
 def submit_order():
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if not idempotency_key:
+        return jsonify({"error": "Idempotency-Key header is required"}), 400
+
     body = request.get_json(force=True)
     client_name = body.get("clientName")
     addresses = body.get("addresses", [])
 
-    if not client_name or not addresses:
-        return jsonify({"error": "clientName and addresses are required"}), 400
-
-    order_id = body.get("orderId") or f"ORD-{uuid.uuid4().hex[:8]}"
-
     conn = get_connection()
     try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT order_id FROM idempotency_keys WHERE idempotency_key = %s",
+                (idempotency_key,),
+            )
+            existing = cur.fetchone()
+
+        if existing:
+            order_id = existing[0]
+            with conn.cursor() as cur:
+                cur.execute("SELECT status FROM orders WHERE order_id = %s", (order_id,))
+                row = cur.fetchone()
+            return jsonify({"orderId": order_id, "status": row[0] if row else "UNKNOWN"}), 202
+
+        if not client_name or not addresses:
+            return jsonify({"error": "clientName and addresses are required"}), 400
+
+        order_id = body.get("orderId") or f"ORD-{uuid.uuid4().hex[:8]}"
+
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -57,6 +84,10 @@ def submit_order():
                 ON CONFLICT (order_id) DO NOTHING
                 """,
                 (order_id, client_name, json.dumps(addresses)),
+            )
+            cur.execute(
+                "INSERT INTO idempotency_keys (idempotency_key, order_id) VALUES (%s, %s)",
+                (idempotency_key, order_id),
             )
         conn.commit()
     finally:
@@ -95,6 +126,7 @@ def get_order(order_id):
 
 
 @app.route("/deliveries/<order_id>/status", methods=["POST"])
+@require_auth
 def update_delivery_status(order_id):
     # Stands in for the driver app marking a package delivered/failed.
     body = request.get_json(force=True)
