@@ -3,3 +3,5 @@ requests
 pika
 psycopg2-binary
 flask-socketio
+pyjwt
+pybreaker
