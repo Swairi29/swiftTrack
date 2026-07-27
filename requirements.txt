@@ -1,0 +1,5 @@
+flask
+requests
+pika
+psycopg2-binary
+flask-socketio

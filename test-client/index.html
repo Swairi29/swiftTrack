@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>SwiftTrack - live order status (test client)</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 24px; color: #222; }
+    table { border-collapse: collapse; width: 100%; max-width: 720px; }
+    th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; font-size: 14px; }
+    th { background: #1D3557; color: white; }
+    .PENDING { color: #b8860b; font-weight: bold; }
+    .CONFIRMED, .DELIVERED { color: #0f6e56; font-weight: bold; }
+    .FAILED { color: #a5310a; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h3>Live order status</h3>
+  <p>Stands in for the client portal. Each row updates live as events arrive over WebSocket - no page refresh.</p>
+  <table>
+    <thead><tr><th>Order ID</th><th>Order status</th><th>Delivery status</th><th>Last event</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <script>
+    const socket = io("http://localhost:5003");
+    const rows = {};
+    const tbody = document.getElementById("rows");
+
+    function render() {
+      tbody.innerHTML = "";
+      Object.values(rows).forEach((r) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${r.orderId}</td>` +
+          `<td class="${r.orderStatus || ''}">${r.orderStatus || '-'}</td>` +
+          `<td class="${r.deliveryStatus || ''}">${r.deliveryStatus || '-'}</td>` +
+          `<td>${r.lastEvent || '-'}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+
+    socket.on("update", (data) => {
+      const id = data.orderId;
+      if (!rows[id]) rows[id] = { orderId: id };
+      if (data.type === "order.created") rows[id].orderStatus = "PENDING";
+      if (data.type === "order.completed") rows[id].orderStatus = "CONFIRMED";
+      if (data.type === "order.failed") rows[id].orderStatus = "FAILED";
+      if (data.type === "delivery.updated") rows[id].deliveryStatus = data.status;
+      rows[id].lastEvent = data.type;
+      render();
+    });
+  </script>
+</body>
+</html>

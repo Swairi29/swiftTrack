@@ -1,0 +1,26 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: swifttrack-rabbitmq
+    ports:
+      - "5672:5672"    # AMQP port used by all services
+      - "15672:15672"  # Management UI: http://localhost:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: swift
+      RABBITMQ_DEFAULT_PASS: swift123
+
+  postgres:
+    image: postgres:16
+    container_name: swifttrack-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: swift
+      POSTGRES_PASSWORD: swift123
+      POSTGRES_DB: swifttrack
+    volumes:
+      - swifttrack_pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  swifttrack_pgdata:
