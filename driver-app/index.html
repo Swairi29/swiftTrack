@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SwiftTrack — Driver App</title>
+<link rel="stylesheet" href="../shared/style.css" />
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  .container { max-width: 560px; }
+  .stop-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+  <header class="app-bar">
+    <div class="brand">SwiftTrack <small>Driver App</small></div>
+    <div class="session" id="session"></div>
+  </header>
+
+  <div class="container">
+
+    <section class="panel" id="login-panel">
+      <h2>Log in</h2>
+      <p class="hint">Same prototype auth as the client portal — folded into the Order Service rather than a separate API Gateway for this build.</p>
+      <form class="inline-form" id="login-form">
+        <div class="field">
+          <label for="username">Driver username</label>
+          <input id="username" type="text" placeholder="e.g. driver-42" required />
+        </div>
+        <button type="submit">Log in</button>
+      </form>
+    </section>
+
+    <section class="panel" id="manifest-panel" hidden>
+      <h2><span class="conn-dot" id="conn-dot"></span>Today's manifest</h2>
+      <p class="hint">Confirmed orders assigned to this route — live from the same event stream the client portal watches. Mark each stop delivered or failed as you go.</p>
+      <div id="manifest"></div>
+      <div class="empty-state" id="empty-state">No confirmed deliveries yet. Waiting for orders to clear CMS / WMS / ROS…</div>
+    </section>
+
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const API_BASE = "http://localhost:5000";
+const WS_BASE = "http://localhost:5003";
+
+const state = {
+  token: localStorage.getItem("swifttrack.token") || null,
+  username: localStorage.getItem("swifttrack.username") || null,
+  orders: {}, // orderId -> { orderId, clientName, addresses, orderStatus, deliveryStatus, ros }
+};
+
+const el = (id) => document.getElementById(id);
+
+function showToast(message, isError) {
+  const t = el("toast");
+  t.textContent = message;
+  t.className = "toast show" + (isError ? " error" : "");
+  setTimeout(() => { t.className = "toast"; }, 3200);
+}
+
+function renderSession() {
+  const session = el("session");
+  if (state.token) {
+    session.innerHTML = `<strong>${state.username}</strong> &nbsp; <button class="secondary" id="logout-btn">Log out</button>`;
+    el("logout-btn").addEventListener("click", logout);
+    el("login-panel").hidden = true;
+    el("manifest-panel").hidden = false;
+  } else {
+    session.innerHTML = "";
+    el("login-panel").hidden = false;
+    el("manifest-panel").hidden = true;
+  }
+}
+
+function logout() {
+  state.token = null;
+  state.username = null;
+  localStorage.removeItem("swifttrack.token");
+  localStorage.removeItem("swifttrack.username");
+  renderSession();
+}
+
+function badge(value) {
+  if (!value) return `<span class="badge dash">-</span>`;
+  return `<span class="badge ${value}">${value}</span>`;
+}
+
+function renderManifest() {
+  const manifest = el("manifest");
+  // A driver only cares about orders that have cleared the saga (CONFIRMED)
+  // and haven't already been marked delivered/failed.
+  const stops = Object.values(state.orders)
+    .filter((o) => o.orderStatus === "CONFIRMED" && !o.deliveryStatus)
+    .sort((a, b) => (a.orderId < b.orderId ? -1 : 1));
+
+  el("empty-state").style.display = stops.length ? "none" : "block";
+
+  manifest.innerHTML = stops.map((o) => `
+    <div class="panel" style="margin:0 0 12px; padding:14px 16px;">
+      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+        <strong>${o.orderId}</strong>
+        <span class="muted">${o.clientName || "-"}</span>
+      </div>
+      ${o.addresses ? `<ul class="stop-list">${o.addresses.map((a) => `<li>${a}</li>`).join("")}</ul>` : ""}
+      ${o.ros ? `<p class="hint" style="margin:6px 0 0;">Route ${o.ros.routeId || "-"} · ~${o.ros.estimatedMinutes ?? "-"} min</p>` : ""}
+      <div class="action-cell" style="margin-top:10px;">
+        <button class="confirm" data-action="DELIVERED" data-order="${o.orderId}">Mark delivered</button>
+        <button class="danger" data-action="FAILED" data-order="${o.orderId}">Mark failed</button>
+      </div>
+    </div>
+  `).join("");
+
+  manifest.querySelectorAll("button[data-action]").forEach((btn) => {
+    btn.addEventListener("click", () => updateDelivery(btn.dataset.order, btn.dataset.action));
+  });
+}
+
+function applyEvent(data) {
+  const id = data.orderId;
+  if (!id) return;
+  if (!state.orders[id]) state.orders[id] = { orderId: id };
+  const o = state.orders[id];
+
+  if (data.type === "order.created") {
+    o.clientName = data.clientName;
+    o.addresses = data.addresses;
+    o.orderStatus = "PENDING";
+  }
+  if (data.type === "order.completed") {
+    o.orderStatus = "CONFIRMED";
+    o.ros = data.ros;
+  }
+  if (data.type === "order.failed") o.orderStatus = "FAILED";
+  if (data.type === "delivery.updated") o.deliveryStatus = data.status;
+
+  renderManifest();
+}
+
+async function login(event) {
+  event.preventDefault();
+  const username = el("username").value.trim();
+  if (!username) return;
+  try {
+    const resp = await fetch(`${API_BASE}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username }),
+    });
+    if (!resp.ok) throw new Error("Login failed");
+    const data = await resp.json();
+    state.token = data.token;
+    state.username = username;
+    localStorage.setItem("swifttrack.token", state.token);
+    localStorage.setItem("swifttrack.username", username);
+    renderSession();
+    showToast(`Welcome, ${username}`);
+  } catch (err) {
+    showToast(err.message, true);
+  }
+}
+
+async function updateDelivery(orderId, status) {
+  let reason = null;
+  if (status === "FAILED") {
+    reason = prompt("Reason the delivery failed (e.g. recipient not available):") || "Not specified";
+  }
+  try {
+    const resp = await fetch(`${API_BASE}/deliveries/${orderId}/status`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${state.token}`,
+      },
+      body: JSON.stringify({ status, reason }),
+    });
+    if (resp.status === 401) { logout(); throw new Error("Session expired, please log in again"); }
+    if (!resp.ok) throw new Error((await resp.json()).error || "Update failed");
+    showToast(`${orderId} marked ${status.toLowerCase()}`);
+    // Proof of delivery (signature / photo capture) would hook in here via
+    // the device camera — out of scope for this prototype's web UI.
+  } catch (err) {
+    showToast(err.message, true);
+  }
+}
+
+function connectLiveUpdates() {
+  const socket = io(WS_BASE);
+  socket.on("connect", () => el("conn-dot").classList.add("live"));
+  socket.on("disconnect", () => el("conn-dot").classList.remove("live"));
+  socket.on("update", applyEvent);
+}
+
+el("login-form").addEventListener("submit", login);
+
+renderSession();
+renderManifest();
+connectLiveUpdates();
+</script>
+</body>
+</html>

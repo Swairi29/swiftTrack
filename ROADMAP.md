@@ -75,27 +75,34 @@ risk since it's ungraded by demo, only by the PDF.
 - [ ] No rate limiting on `/orders` — relevant given the brief's own
       "Black Friday / Avurudu" high-volume framing
 
-## 4. UI polish (do this last, once the backend items above are stable)
+## 4. UI polish
 
-`test-client/index.html` is a bare read-only test page, not the two
-things the brief actually asks for:
+`test-client/index.html` (bare read-only test page) has been replaced by
+two real UIs, both static HTML/JS against the existing APIs, sharing
+`shared/style.css`:
 
-- [ ] **Client Portal**: needs a real login form (hits `/login`, stores
-      the JWT, sends it as `Authorization: Bearer ...`), an order
-      submission form (currently only demoed via `curl`), and the existing
-      live-status table wired to use the token
-- [ ] **Driver Mobile App** — currently has *zero* UI. The backend only
-      has `/deliveries/<order_id>/status`. The brief calls for: viewing
-      the assigned manifest/route, marking delivered/failed with a reason,
-      and capturing a signature or photo as proof of delivery. Per the
-      brief this can be "architecturally described but only minimally
-      implemented" for the real-time piece — but the manifest view +
-      delivered/failed action should exist as at least a simple mobile-
-      width web page, since it's a named functional requirement, not just
-      part of the real-time-tracking allowance
-- [ ] General polish once functional: consistent styling between the two
-      UIs, loading/error states, a favicon, README screenshots for the
-      documentation
+- [x] **Client Portal** (`client-portal/index.html`): login form against
+      `/login` with the JWT held in `localStorage`, an order submission
+      form (was previously only demoed via `curl`), and a live order table
+      driven by the WebSocket feed
+- [x] **Driver Mobile App** (`driver-app/index.html`): login, a manifest
+      view (derived from the same event stream — orders that are
+      `CONFIRMED` and not yet delivered/failed), and "mark delivered" /
+      "mark failed" actions against `/deliveries/<id>/status`, with a
+      reason prompt on failure
+- [ ] **Proof of delivery** (signature/photo capture) — deliberately not
+      implemented; call this out explicitly in the documentation as
+      "architecturally described, minimally implemented" per the brief's
+      own allowance for the real-time/notification piece
+- [ ] Mobile-responsive layout pass on `driver-app` — it's usable on a
+      phone-width viewport but hasn't been tested against one, and the
+      brief specifically frames it as a driver's mobile app
+- [ ] Loading states while a login/order/delivery-status request is in
+      flight (currently just disables the submit button on the order form)
+- [ ] Favicon + README screenshots for the documentation
+- [ ] The client portal shows *every* order broadcast on the WebSocket, not
+      just the logged-in client's own — same underlying gap as the
+      unscoped WebSocket noted in section 3; worth fixing together
 
 ## 5. Testing (currently none)
 
@@ -115,7 +122,8 @@ things the brief actually asks for:
    secrets) — leave the WebSocket-scoping fix for whoever has bandwidth
 3. Containerize the remaining services (section 2) so the scalability
    story is demoable
-4. UI pass (section 4) — only after the above is stable, since UI work is
-   the most visible in the screencast and easiest to redo last
-5. Tests (section 5) alongside/after UI, focused on what you'll actually
+4. Remaining UI polish (section 4) — the core client portal and driver app
+   now exist; what's left is mobile-responsiveness, loading states, and
+   scoping the client portal's order list to the logged-in client
+5. Tests (section 5) alongside the above, focused on what you'll actually
    demo live

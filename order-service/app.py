@@ -20,11 +20,13 @@ import uuid
 
 import pika
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 from auth import generate_token, require_auth
 from db import get_connection
 
 app = Flask(__name__)
+CORS(app)
 
 
 def publish_event(routing_key, payload):

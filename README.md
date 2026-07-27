@@ -29,6 +29,11 @@
 - **JWT auth** on `/orders` and `/deliveries/.../status` — folded into the
   Order Service for the prototype rather than a separate API Gateway
   service; this simplification should be stated explicitly in the report.
+- **Real client portal and driver app UIs** (`client-portal/`,
+  `driver-app/`) replacing the old read-only test page — both log in
+  against `/login`, hold the JWT in `localStorage`, and drive the same
+  WebSocket feed live. CORS (`flask-cors`) is now enabled on the Order
+  Service so these pages can call it directly from `file://`.
 
 ## 1. Start the infrastructure
 
@@ -53,14 +58,20 @@ python saga-worker/worker.py        # message consumer, no HTTP port
 python notification-service/app.py  # WebSocket on http://localhost:5003
 ```
 
-Open `test-client/index.html` in a browser to watch orders update live.
+Open `client-portal/index.html` in a browser for the client-facing UI (log
+in, submit an order, watch it move through the saga live), or
+`driver-app/index.html` for the driver-facing UI (log in, see confirmed
+orders as a manifest, mark each delivered/failed). Both are plain static
+HTML — no build step, just open the file.
 
 ## 4. Get a token and submit an order
+
+Either use the client portal UI above, or drive it directly with curl:
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:5000/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"demo","password":"demo"}' | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
+  -d '{"username":"demo"}' | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
 
 curl -i -X POST http://localhost:5000/orders \
   -H "Content-Type: application/json" \
@@ -70,7 +81,7 @@ curl -i -X POST http://localhost:5000/orders \
 ```
 
 Response comes back `202` immediately. Watch the Saga Worker's terminal and
-`test-client/index.html` for the order moving to `CONFIRMED` shortly after.
+`client-portal/index.html` for the order moving to `CONFIRMED` shortly after.
 
 ## 5. Demo idempotency
 
@@ -107,6 +118,10 @@ curl -X POST http://localhost:5000/deliveries/<orderId>/status \
   -d '{"status": "DELIVERED"}'
 ```
 
+Or just click "Mark delivered" / "Mark failed" on the order's card in
+`driver-app/index.html` — either way, watch `client-portal/index.html`
+pick up the delivery status live in the same row.
+
 ## Week 3 acceptance checklist
 
 - [ ] `/login` issues a JWT; `/orders` and `/deliveries/.../status` reject
@@ -119,7 +134,8 @@ curl -X POST http://localhost:5000/deliveries/<orderId>/status \
       even after restarting the Order Service
 - [ ] Restarting the Saga Worker mid-flight and letting RabbitMQ redeliver
       a message doesn't double-process an already-completed order
-- [ ] `test-client/index.html` reflects all of the above live
+- [ ] `client-portal/index.html` and `driver-app/index.html` reflect all
+      of the above live
 
 ## Who owns what this week
 

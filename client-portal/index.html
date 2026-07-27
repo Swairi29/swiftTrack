@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>SwiftTrack — Client Portal</title>
+<link rel="stylesheet" href="../shared/style.css" />
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body>
+  <header class="app-bar">
+    <div class="brand">SwiftTrack <small>Client Portal</small></div>
+    <div class="session" id="session"></div>
+  </header>
+
+  <div class="container">
+
+    <section class="panel" id="login-panel">
+      <h2>Log in</h2>
+      <p class="hint">Prototype auth — any username issues a JWT via <code>POST /login</code>.</p>
+      <form class="inline-form" id="login-form">
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" type="text" placeholder="e.g. kandy-traders" required />
+        </div>
+        <button type="submit">Log in</button>
+      </form>
+    </section>
+
+    <section class="panel" id="order-panel" hidden>
+      <h2>Submit a new order</h2>
+      <p class="hint">Sent to the Order Service, which persists it and hands it off to the Saga Worker asynchronously — this form gets its response back before CMS/WMS/ROS have even been called.</p>
+      <form id="order-form">
+        <div class="inline-form" style="margin-bottom:12px;">
+          <div class="field">
+            <label for="client-name">Client name</label>
+            <input id="client-name" type="text" placeholder="Kandy Traders" required />
+          </div>
+        </div>
+        <div class="field" style="margin-bottom:12px;">
+          <label for="addresses">Delivery addresses <span class="muted">(one per line)</span></label>
+          <textarea id="addresses" placeholder="123 Galle Rd&#10;45 Duplication Rd" required></textarea>
+        </div>
+        <button type="submit" id="submit-order-btn">Submit order</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2><span class="conn-dot" id="conn-dot"></span>Your orders</h2>
+      <p class="hint">Live — updates as the Saga Worker and drivers make progress, no page refresh.</p>
+      <table>
+        <thead>
+          <tr><th>Order ID</th><th>Client</th><th>Order status</th><th>Delivery status</th><th>Last event</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty-state" id="empty-state">No orders yet — submit one above to see it appear here live.</div>
+    </section>
+
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const API_BASE = "http://localhost:5000";
+const WS_BASE = "http://localhost:5003";
+
+const state = {
+  token: localStorage.getItem("swifttrack.token") || null,
+  username: localStorage.getItem("swifttrack.username") || null,
+  orders: {}, // orderId -> { orderId, clientName, orderStatus, deliveryStatus, lastEvent }
+};
+
+const el = (id) => document.getElementById(id);
+
+function showToast(message, isError) {
+  const t = el("toast");
+  t.textContent = message;
+  t.className = "toast show" + (isError ? " error" : "");
+  setTimeout(() => { t.className = "toast"; }, 3200);
+}
+
+function renderSession() {
+  const session = el("session");
+  if (state.token) {
+    session.innerHTML = `Logged in as <strong>${state.username}</strong> &nbsp; <button class="secondary" id="logout-btn">Log out</button>`;
+    el("logout-btn").addEventListener("click", logout);
+    el("login-panel").hidden = true;
+    el("order-panel").hidden = false;
+  } else {
+    session.innerHTML = "";
+    el("login-panel").hidden = false;
+    el("order-panel").hidden = true;
+  }
+}
+
+function logout() {
+  state.token = null;
+  state.username = null;
+  localStorage.removeItem("swifttrack.token");
+  localStorage.removeItem("swifttrack.username");
+  renderSession();
+}
+
+function badge(value) {
+  if (!value) return `<span class="badge dash">-</span>`;
+  return `<span class="badge ${value}">${value}</span>`;
+}
+
+function renderRows() {
+  const tbody = el("rows");
+  const orders = Object.values(state.orders).sort((a, b) => (a.orderId < b.orderId ? 1 : -1));
+  el("empty-state").style.display = orders.length ? "none" : "block";
+  tbody.innerHTML = orders.map((o) => `
+    <tr>
+      <td>${o.orderId}</td>
+      <td>${o.clientName || "-"}</td>
+      <td>${badge(o.orderStatus)}</td>
+      <td>${badge(o.deliveryStatus)}</td>
+      <td class="muted">${o.lastEvent || "-"}</td>
+    </tr>
+  `).join("");
+}
+
+function applyEvent(data) {
+  const id = data.orderId;
+  if (!id) return;
+  if (!state.orders[id]) state.orders[id] = { orderId: id };
+  const o = state.orders[id];
+
+  if (data.type === "order.created") {
+    o.clientName = data.clientName;
+    o.orderStatus = "PENDING";
+  }
+  if (data.type === "order.completed") o.orderStatus = "CONFIRMED";
+  if (data.type === "order.failed") o.orderStatus = "FAILED";
+  if (data.type === "delivery.updated") o.deliveryStatus = data.status;
+
+  o.lastEvent = data.type;
+  renderRows();
+}
+
+async function login(event) {
+  event.preventDefault();
+  const username = el("username").value.trim();
+  if (!username) return;
+  try {
+    const resp = await fetch(`${API_BASE}/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username }),
+    });
+    if (!resp.ok) throw new Error("Login failed");
+    const data = await resp.json();
+    state.token = data.token;
+    state.username = username;
+    localStorage.setItem("swifttrack.token", state.token);
+    localStorage.setItem("swifttrack.username", username);
+    renderSession();
+    showToast(`Welcome, ${username}`);
+  } catch (err) {
+    showToast(err.message, true);
+  }
+}
+
+async function submitOrder(event) {
+  event.preventDefault();
+  const clientName = el("client-name").value.trim();
+  const addresses = el("addresses").value.split("\n").map((a) => a.trim()).filter(Boolean);
+  if (!clientName || addresses.length === 0) return;
+
+  const btn = el("submit-order-btn");
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`${API_BASE}/orders`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${state.token}`,
+        "Idempotency-Key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ clientName, addresses }),
+    });
+    if (resp.status === 401) { logout(); throw new Error("Session expired, please log in again"); }
+    if (!resp.ok) throw new Error((await resp.json()).error || "Order submission failed");
+    const data = await resp.json();
+    showToast(`Order ${data.orderId} accepted — status: ${data.status}`);
+    el("order-form").reset();
+  } catch (err) {
+    showToast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function connectLiveUpdates() {
+  const socket = io(WS_BASE);
+  socket.on("connect", () => el("conn-dot").classList.add("live"));
+  socket.on("disconnect", () => el("conn-dot").classList.remove("live"));
+  socket.on("update", applyEvent);
+}
+
+el("login-form").addEventListener("submit", login);
+el("order-form").addEventListener("submit", submitOrder);
+
+renderSession();
+renderRows();
+connectLiveUpdates();
+</script>
+</body>
+</html>
