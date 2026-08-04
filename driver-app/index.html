@@ -7,8 +7,9 @@
 <link rel="stylesheet" href="../shared/style.css" />
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <style>
-  .container { max-width: 560px; }
-  .stop-list { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-muted); }
+  .container { max-width: 760px; }
+  .stop-list { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-muted); }
+  .stop-card { margin: 0 0 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel-strong); }
 </style>
 </head>
 <body>
@@ -18,6 +19,45 @@
   </header>
 
   <div class="container">
+    <section class="hero-card panel">
+      <div class="hero-copy">
+        <div class="eyebrow">Driver command center</div>
+        <h1>Turn confirmed orders into completed stops with a calm, focused workflow.</h1>
+        <p>Review the current route, update delivery outcomes, and keep every stop moving forward.</p>
+      </div>
+      <div class="hero-actions">
+        <div class="chip live-chip"><span class="conn-dot live"></span>Live updates active</div>
+        <div class="chip">Route-ready actions</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-header">
+        <div>
+          <h2>Route overview</h2>
+          <p class="hint">This snapshot updates when live events bring in new confirmed orders.</p>
+        </div>
+        <div class="pill" id="driver-pill">Standing by</div>
+      </div>
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <span class="metric-label">Ready to dispatch</span>
+          <strong class="metric-value" id="driver-ready">0</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Delivered</span>
+          <strong class="metric-value" id="driver-delivered">0</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Failed</span>
+          <strong class="metric-value" id="driver-failed">0</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Pending</span>
+          <strong class="metric-value" id="driver-pending">0</strong>
+        </div>
+      </div>
+    </section>
 
     <section class="panel" id="login-panel">
       <h2>Log in</h2>
@@ -32,8 +72,12 @@
     </section>
 
     <section class="panel" id="manifest-panel" hidden>
-      <h2><span class="conn-dot" id="conn-dot"></span>Today's manifest</h2>
-      <p class="hint">Confirmed orders assigned to this route — live from the same event stream the client portal watches. Mark each stop delivered or failed as you go.</p>
+      <div class="section-header">
+        <div>
+          <h2><span class="conn-dot" id="conn-dot"></span>Today's manifest</h2>
+          <p class="hint">Confirmed orders assigned to this route — mark each stop delivered or failed as you go.</p>
+        </div>
+      </div>
       <div id="manifest"></div>
       <div class="empty-state" id="empty-state">No confirmed deliveries yet. Waiting for orders to clear CMS / WMS / ROS…</div>
     </section>
@@ -81,6 +125,7 @@ function logout() {
   localStorage.removeItem("swifttrack.token");
   localStorage.removeItem("swifttrack.username");
   renderSession();
+  renderMetrics();
 }
 
 function badge(value) {
@@ -88,10 +133,21 @@ function badge(value) {
   return `<span class="badge ${value}">${value}</span>`;
 }
 
+function renderMetrics() {
+  const ready = Object.values(state.orders).filter((o) => o.orderStatus === "CONFIRMED" && !o.deliveryStatus).length;
+  const delivered = Object.values(state.orders).filter((o) => o.deliveryStatus === "DELIVERED").length;
+  const failed = Object.values(state.orders).filter((o) => o.deliveryStatus === "FAILED").length;
+  const pending = Object.values(state.orders).filter((o) => o.orderStatus === "PENDING").length;
+
+  el("driver-ready").textContent = ready;
+  el("driver-delivered").textContent = delivered;
+  el("driver-failed").textContent = failed;
+  el("driver-pending").textContent = pending;
+  el("driver-pill").textContent = ready ? `${ready} stop(s) ready` : "Standing by";
+}
+
 function renderManifest() {
   const manifest = el("manifest");
-  // A driver only cares about orders that have cleared the saga (CONFIRMED)
-  // and haven't already been marked delivered/failed.
   const stops = Object.values(state.orders)
     .filter((o) => o.orderStatus === "CONFIRMED" && !o.deliveryStatus)
     .sort((a, b) => (a.orderId < b.orderId ? -1 : 1));
@@ -99,8 +155,8 @@ function renderManifest() {
   el("empty-state").style.display = stops.length ? "none" : "block";
 
   manifest.innerHTML = stops.map((o) => `
-    <div class="panel" style="margin:0 0 12px; padding:14px 16px;">
-      <div style="display:flex; justify-content:space-between; align-items:baseline;">
+    <div class="stop-card">
+      <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap;">
         <strong>${o.orderId}</strong>
         <span class="muted">${o.clientName || "-"}</span>
       </div>
@@ -136,6 +192,7 @@ function applyEvent(data) {
   if (data.type === "order.failed") o.orderStatus = "FAILED";
   if (data.type === "delivery.updated") o.deliveryStatus = data.status;
 
+  renderMetrics();
   renderManifest();
 }
 
@@ -179,8 +236,6 @@ async function updateDelivery(orderId, status) {
     if (resp.status === 401) { logout(); throw new Error("Session expired, please log in again"); }
     if (!resp.ok) throw new Error((await resp.json()).error || "Update failed");
     showToast(`${orderId} marked ${status.toLowerCase()}`);
-    // Proof of delivery (signature / photo capture) would hook in here via
-    // the device camera — out of scope for this prototype's web UI.
   } catch (err) {
     showToast(err.message, true);
   }
@@ -188,14 +243,21 @@ async function updateDelivery(orderId, status) {
 
 function connectLiveUpdates() {
   const socket = io(WS_BASE);
-  socket.on("connect", () => el("conn-dot").classList.add("live"));
-  socket.on("disconnect", () => el("conn-dot").classList.remove("live"));
+  socket.on("connect", () => {
+    el("conn-dot").classList.add("live");
+    el("driver-pill").textContent = "Live stream connected";
+  });
+  socket.on("disconnect", () => {
+    el("conn-dot").classList.remove("live");
+    el("driver-pill").textContent = "Reconnecting…";
+  });
   socket.on("update", applyEvent);
 }
 
 el("login-form").addEventListener("submit", login);
 
 renderSession();
+renderMetrics();
 renderManifest();
 connectLiveUpdates();
 </script>

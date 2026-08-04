@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>SwiftTrack — Client Portal</title>
 <link rel="stylesheet" href="../shared/style.css" />
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
@@ -13,6 +14,45 @@
   </header>
 
   <div class="container">
+    <section class="hero-card panel">
+      <div class="hero-copy">
+        <div class="eyebrow">Operations center</div>
+        <h1>Keep every order visible from checkout to doorstep.</h1>
+        <p>Track new requests, follow live updates, and keep your customers informed without refreshing the page.</p>
+      </div>
+      <div class="hero-actions">
+        <div class="chip live-chip"><span class="conn-dot live"></span>Live stream connected</div>
+        <div class="chip">Secure session view</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-header">
+        <div>
+          <h2>Operational snapshot</h2>
+          <p class="hint">Live totals update as orders and deliveries progress.</p>
+        </div>
+        <div class="pill" id="snapshot-pill">All systems ready</div>
+      </div>
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <span class="metric-label">Orders tracked</span>
+          <strong class="metric-value" id="metric-total">0</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Pending</span>
+          <strong class="metric-value" id="metric-pending">0</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Confirmed</span>
+          <strong class="metric-value" id="metric-confirmed">0</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Delivered</span>
+          <strong class="metric-value" id="metric-delivered">0</strong>
+        </div>
+      </div>
+    </section>
 
     <section class="panel" id="login-panel">
       <h2>Log in</h2>
@@ -28,7 +68,7 @@
 
     <section class="panel" id="order-panel" hidden>
       <h2>Submit a new order</h2>
-      <p class="hint">Sent to the Order Service, which persists it and hands it off to the Saga Worker asynchronously — this form gets its response back before CMS/WMS/ROS have even been called.</p>
+      <p class="hint">Send a new request into the order service and follow it through dispatching and delivery.</p>
       <form id="order-form">
         <div class="inline-form" style="margin-bottom:12px;">
           <div class="field">
@@ -45,8 +85,16 @@
     </section>
 
     <section class="panel">
-      <h2><span class="conn-dot" id="conn-dot"></span>Your orders</h2>
-      <p class="hint">Live — updates as the Saga Worker and drivers make progress, no page refresh.</p>
+      <div class="section-header">
+        <div>
+          <h2><span class="conn-dot" id="conn-dot"></span>Your orders</h2>
+          <p class="hint">Live updates arrive as the saga worker and drivers make progress.</p>
+        </div>
+        <div class="field search-field">
+          <label class="sr-only" for="order-search">Search orders</label>
+          <input id="order-search" type="text" placeholder="Search by ID or client" />
+        </div>
+      </div>
       <table>
         <thead>
           <tr><th>Order ID</th><th>Client</th><th>Order status</th><th>Delivery status</th><th>Last event</th></tr>
@@ -99,6 +147,7 @@ function logout() {
   localStorage.removeItem("swifttrack.token");
   localStorage.removeItem("swifttrack.username");
   renderSession();
+  renderMetrics();
 }
 
 function badge(value) {
@@ -106,9 +155,29 @@ function badge(value) {
   return `<span class="badge ${value}">${value}</span>`;
 }
 
+function getFilteredOrders() {
+  const query = (el("order-search")?.value || "").trim().toLowerCase();
+  const orders = Object.values(state.orders).sort((a, b) => (a.orderId < b.orderId ? 1 : -1));
+  if (!query) return orders;
+  return orders.filter((o) => `${o.orderId} ${o.clientName || ""}`.toLowerCase().includes(query));
+}
+
+function renderMetrics() {
+  const total = Object.keys(state.orders).length;
+  const pending = Object.values(state.orders).filter((o) => o.orderStatus === "PENDING").length;
+  const confirmed = Object.values(state.orders).filter((o) => o.orderStatus === "CONFIRMED").length;
+  const delivered = Object.values(state.orders).filter((o) => o.deliveryStatus === "DELIVERED").length;
+
+  el("metric-total").textContent = total;
+  el("metric-pending").textContent = pending;
+  el("metric-confirmed").textContent = confirmed;
+  el("metric-delivered").textContent = delivered;
+  el("snapshot-pill").textContent = total ? `${total} orders in motion` : "All systems ready";
+}
+
 function renderRows() {
   const tbody = el("rows");
-  const orders = Object.values(state.orders).sort((a, b) => (a.orderId < b.orderId ? 1 : -1));
+  const orders = getFilteredOrders();
   el("empty-state").style.display = orders.length ? "none" : "block";
   tbody.innerHTML = orders.map((o) => `
     <tr>
@@ -136,6 +205,7 @@ function applyEvent(data) {
   if (data.type === "delivery.updated") o.deliveryStatus = data.status;
 
   o.lastEvent = data.type;
+  renderMetrics();
   renderRows();
 }
 
@@ -194,15 +264,23 @@ async function submitOrder(event) {
 
 function connectLiveUpdates() {
   const socket = io(WS_BASE);
-  socket.on("connect", () => el("conn-dot").classList.add("live"));
-  socket.on("disconnect", () => el("conn-dot").classList.remove("live"));
+  socket.on("connect", () => {
+    el("conn-dot").classList.add("live");
+    el("snapshot-pill").textContent = "Live stream connected";
+  });
+  socket.on("disconnect", () => {
+    el("conn-dot").classList.remove("live");
+    el("snapshot-pill").textContent = "Reconnecting…";
+  });
   socket.on("update", applyEvent);
 }
 
 el("login-form").addEventListener("submit", login);
 el("order-form").addEventListener("submit", submitOrder);
+el("order-search").addEventListener("input", renderRows);
 
 renderSession();
+renderMetrics();
 renderRows();
 connectLiveUpdates();
 </script>
