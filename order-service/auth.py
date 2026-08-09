@@ -5,12 +5,21 @@ prototype's moving parts manageable - this simplification should be
 stated explicitly in the documentation, not left implicit.
 """
 import datetime
+import os
 from functools import wraps
 
 import jwt
+from dotenv import load_dotenv
 from flask import request, jsonify
 
-SECRET_KEY = "swifttrack-dev-secret"  # TODO: load from env var before any real deployment
+load_dotenv()
+
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY is not set. Copy .env.example to .env and set a real "
+        "secret (python -c \"import secrets; print(secrets.token_hex(32))\")."
+    )
 
 
 def generate_token(username):
