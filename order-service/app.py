@@ -1,5 +1,5 @@
 """
-Order Service - Week 2 (corrected foundation).
+Order Service 
 
 Deliberately thin: validates the request, persists it as PENDING in
 Postgres, publishes an order.created event, and returns immediately.
@@ -14,24 +14,46 @@ gets a response before any of that happens.
 Also handles the driver-app side of real-time tracking: marking a package
 delivered/failed, which is the scenario's own example of a status change
 that should reach the client portal immediately.
+
+
+Fixes applied in this pass:
+  - GET /orders/<id> now requires auth (previously anyone could look up
+    or enumerate any order)
+  - CORS is scoped to ALLOWED_ORIGINS from the environment, not "*"
+  - RabbitMQ credentials come from the environment, not hardcoded
+
+Still deliberately thin: it never calls CMS/WMS/ROS itself. That stays
+the Saga Worker's job, running as its own separate process.
+
+
 """
 import json
+import os
 import uuid
 
 import pika
+from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 from auth import generate_token, require_auth
 from db import get_connection
 
-app = Flask(__name__)
-CORS(app)
+load_dotenv()
 
+app = Flask(__name__)
+
+
+allowed_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+CORS(app, origins=allowed_origins or None)  # None here means Flask-CORS default (same-origin only), not "*"
+
+RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")
+RABBITMQ_USER = os.environ.get("RABBITMQ_USER", "swift")
+RABBITMQ_PASSWORD = os.environ.get("RABBITMQ_PASSWORD", "swift123")
 
 def publish_event(routing_key, payload):
     connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host="localhost", credentials=pika.PlainCredentials("swift", "swift123")
+       host=RABBITMQ_HOST, credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
     ))
     channel = connection.channel()
     channel.exchange_declare(exchange="swifttrack", exchange_type="topic")
@@ -41,6 +63,8 @@ def publish_event(routing_key, payload):
 
 @app.route("/login", methods=["POST"])
 def login():
+    # Mock login - any username/password issues a token.
+    # TODO: replace with real client-portal / driver-app credential checks.
     creds = request.get_json(force=True)
     username = creds.get("username", "demo-user")
     return jsonify({"token": generate_token(username)})
@@ -99,12 +123,11 @@ def submit_order():
         "orderId": order_id, "clientName": client_name, "addresses": addresses,
     })
 
-    # 202 Accepted, not 200/201 - the order is accepted for processing,
-    # not yet processed. The Saga Worker handles CMS/WMS/ROS asynchronously.
     return jsonify({"orderId": order_id, "status": "PENDING"}), 202
 
 
 @app.route("/orders/<order_id>", methods=["GET"])
+@require_auth
 def get_order(order_id):
     conn = get_connection()
     try:
