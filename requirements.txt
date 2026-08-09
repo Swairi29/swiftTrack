@@ -6,3 +6,5 @@ flask-socketio
 pyjwt
 pybreaker
 flask-cors
+python-dotenv
+defusedxml
