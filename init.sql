@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS orders (
     client_name TEXT NOT NULL,
     addresses JSONB NOT NULL,
     status TEXT NOT NULL DEFAULT 'PENDING',
+    claimed_at TIMESTAMP,
     cms_order_id TEXT,
     wms_package_id TEXT,
     ros_route_id TEXT,
