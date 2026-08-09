@@ -1,43 +1,55 @@
 """
-Saga Worker - Week 3 (compensation + circuit breaker).
+Saga Worker.
 
-Runs as its OWN process, entirely separate from the Order Service. It
-consumes order.created events from RabbitMQ and runs CMS -> WMS -> ROS in
-sequence, updating the order's row in Postgres and publishing
-order.completed / order.failed as it goes.
+Fixes applied in this pass:
+  - Atomic claim before processing: the previous version only wrote
+    CONFIRMED/FAILED at the very end of process_order(), so a crash
+    mid-saga left the row at PENDING. On redelivery, the old
+    read-then-check guard saw PENDING and re-ran the ENTIRE saga,
+    calling CMS/WMS/ROS a second time for the same order. The fix below
+    claims the order atomically (UPDATE ... WHERE status='PENDING') the
+    moment processing starts, so a redelivered message after a crash
+    finds the row already claimed and skips - the failure mode changes
+    from "silently duplicated side effects" to "stuck at PROCESSING",
+    which is recoverable and, critically, doesn't duplicate a CMS order
+    or a WMS package. The claim also has a staleness clause so a
+    genuinely abandoned claim (the worker that took it crashed and
+    RabbitMQ redelivers the message) can be re-claimed after a timeout,
+    rather than being stuck forever.
+  - Compensation failures now go to a dead-letter queue instead of a
+    bare `except: pass` - this was an explicit TODO in the code before.
+  - RabbitMQ/backend credentials come from the environment.
 
-If a step fails partway through, run_saga() unwinds whatever already
-succeeded (WMS then CMS, reverse order) via their cancel operations -
-this is the orchestrated-Saga answer to challenge 4 in the brief
-("propose the methods the system would use to recover when one or more
-steps in a transaction fail").
-
-The ROS call is wrapped in a circuit breaker (pybreaker): after 3
-consecutive failures it trips and fails fast for 20s instead of hammering
-a struggling/unavailable ROS.
-
-Manual ack (not auto_ack) is used deliberately: if this process crashes
-mid-order, the message is redelivered rather than silently lost, which
-matters for "an order must never be lost" from the brief. Because of that
-redelivery, process_order() first checks the order's current status and
-skips it if it has already moved past PENDING - the idempotent-consumer
-side of that guarantee.
+Requires an additional `claimed_at TIMESTAMP` column on `orders` - see
+the migration note in the accompanying README/PR description.
 """
 import json
+import os
 import socket
-import xml.etree.ElementTree as ET
 
 import pika
 import pybreaker
 import requests
+from defusedxml import ElementTree as ET  # hardened against XXE
+from dotenv import load_dotenv
 
 from db import get_connection
+
+load_dotenv()
 
 CMS_URL = "http://localhost:5001/cms/order"
 CMS_CANCEL_URL = "http://localhost:5001/cms/order/cancel"
 ROS_URL = "http://localhost:5002/routes/optimize"
 WMS_HOST = "localhost"
 WMS_PORT = 6000
+
+RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")
+RABBITMQ_USER = os.environ.get("RABBITMQ_USER", "swift")
+RABBITMQ_PASSWORD = os.environ.get("RABBITMQ_PASSWORD", "swift123")
+
+# How long a claim is honored before it's considered abandoned (e.g. the
+# worker that took it crashed) and can be re-claimed by a redelivery.
+CLAIM_STALE_AFTER = "2 minutes"
 
 # After 3 consecutive ROS failures, stop calling ROS for 20s and fail fast.
 ros_breaker = pybreaker.CircuitBreaker(fail_max=3, reset_timeout=20)
@@ -50,25 +62,51 @@ class SagaFailedError(Exception):
         super().__init__(f"Saga failed at step '{step}': {reason}")
 
 
-def get_order_status(order_id):
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT status FROM orders WHERE order_id = %s", (order_id,))
-            row = cur.fetchone()
-            return row[0] if row else None
-    finally:
-        conn.close()
+def _rabbitmq_channel():
+    connection = pika.BlockingConnection(pika.ConnectionParameters(
+        host=RABBITMQ_HOST, credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
+    ))
+    return connection, connection.channel()
 
 
 def publish_event(routing_key, payload):
-    connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host="localhost", credentials=pika.PlainCredentials("swift", "swift123")
-    ))
-    channel = connection.channel()
+    connection, channel = _rabbitmq_channel()
     channel.exchange_declare(exchange="swifttrack", exchange_type="topic")
     channel.basic_publish(exchange="swifttrack", routing_key=routing_key, body=json.dumps(payload))
     connection.close()
+
+
+def publish_to_dlq(payload):
+    """Compensation actions that themselves fail land here instead of
+    being silently dropped, so there's an operator-visible trail."""
+    connection, channel = _rabbitmq_channel()
+    channel.queue_declare(queue="compensation.dlq", durable=True)
+    channel.basic_publish(exchange="", routing_key="compensation.dlq", body=json.dumps(payload))
+    connection.close()
+
+
+def claim_order(order_id):
+    """Atomically claim an order for processing. Returns True if this
+    call won the claim, False if it's already been claimed/processed
+    recently and should be skipped."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                UPDATE orders
+                SET status = 'PROCESSING', claimed_at = now(), updated_at = now()
+                WHERE order_id = %s
+                  AND (status = 'PENDING'
+                       OR (status = 'PROCESSING' AND claimed_at < now() - interval '{CLAIM_STALE_AFTER}'))
+                """,
+                (order_id,),
+            )
+            claimed = cur.rowcount == 1
+        conn.commit()
+        return claimed
+    finally:
+        conn.close()
 
 
 def update_order(order_id, **fields):
@@ -87,7 +125,6 @@ def update_order(order_id, **fields):
 
 
 def call_cms(client_name, addresses):
-    # Real translation: build actual XML from the real order fields.
     address_xml = "".join(f"<Address>{a}</Address>" for a in addresses)
     order_xml = f"<Order><ClientName>{client_name}</ClientName><Addresses>{address_xml}</Addresses></Order>"
     resp = requests.post(CMS_URL, data=order_xml, headers={"Content-Type": "application/xml"}, timeout=5)
@@ -96,13 +133,13 @@ def call_cms(client_name, addresses):
     return root.findtext("OrderId")
 
 
-def compensate_cms(cms_order_id):
+def compensate_cms(order_id, cms_order_id):
     if not cms_order_id:
         return
     try:
         requests.post(CMS_CANCEL_URL, json={"orderId": cms_order_id}, timeout=5)
-    except requests.RequestException:
-        pass  # TODO Week 4: route persistently-failing compensations to a dead-letter queue
+    except requests.RequestException as e:
+        publish_to_dlq({"orderId": order_id, "step": "compensate_cms", "cmsOrderId": cms_order_id, "error": str(e)})
 
 
 def call_wms(order_id, addresses):
@@ -111,15 +148,15 @@ def call_wms(order_id, addresses):
         return json.loads(s.recv(1024).decode("utf-8"))
 
 
-def compensate_wms(package_id):
+def compensate_wms(order_id, package_id):
     if not package_id:
         return
     try:
         with socket.create_connection((WMS_HOST, WMS_PORT), timeout=5) as s:
             s.sendall((json.dumps({"cancelPackageId": package_id}) + "\n").encode("utf-8"))
             s.recv(1024)
-    except OSError:
-        pass
+    except OSError as e:
+        publish_to_dlq({"orderId": order_id, "step": "compensate_wms", "packageId": package_id, "error": str(e)})
 
 
 @ros_breaker
@@ -129,33 +166,37 @@ def call_ros(addresses):
     return resp.json()
 
 
-def _compensate(completed):
-    if "wms" in completed:
-        compensate_wms(completed["wms"].get("packageId"))
-    if "cms" in completed:
-        compensate_cms(completed["cms"])
-
-
 def run_saga(order_id, client_name, addresses):
     completed = {}
+
     try:
         completed["cms"] = call_cms(client_name, addresses)
     except (requests.RequestException, ET.ParseError) as e:
         raise SagaFailedError("cms", str(e))
+
     try:
         completed["wms"] = call_wms(order_id, addresses)
     except OSError as e:
-        _compensate(completed)
+        _compensate(order_id, completed)
         raise SagaFailedError("wms", str(e))
+
     try:
         completed["ros"] = call_ros(addresses)
     except pybreaker.CircuitBreakerError:
-        _compensate(completed)
+        _compensate(order_id, completed)
         raise SagaFailedError("ros", "circuit breaker open - ROS has failed repeatedly, giving it a cooldown")
     except requests.RequestException as e:
-        _compensate(completed)
+        _compensate(order_id, completed)
         raise SagaFailedError("ros", str(e))
+
     return completed
+
+
+def _compensate(order_id, completed):
+    if "wms" in completed:
+        compensate_wms(order_id, completed["wms"].get("packageId"))
+    if "cms" in completed:
+        compensate_cms(order_id, completed["cms"])
 
 
 def process_order(event):
@@ -163,10 +204,8 @@ def process_order(event):
     client_name = event["clientName"]
     addresses = event["addresses"]
 
-    # Idempotent-consumer guard against RabbitMQ redelivery.
-    current_status = get_order_status(order_id)
-    if current_status not in (None, "PENDING"):
-        print(f"Skipping {order_id}: already {current_status} (likely a redelivered message)")
+    if not claim_order(order_id):
+        print(f"Skipping {order_id}: already claimed/processed (redelivery or duplicate)")
         return
 
     try:
@@ -186,10 +225,7 @@ def process_order(event):
 
 
 def start_worker():
-    connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host="localhost", credentials=pika.PlainCredentials("swift", "swift123")
-    ))
-    channel = connection.channel()
+    connection, channel = _rabbitmq_channel()
     channel.exchange_declare(exchange="swifttrack", exchange_type="topic")
     queue = channel.queue_declare(queue="saga-worker.order-created", durable=True)
     channel.queue_bind(exchange="swifttrack", queue=queue.method.queue, routing_key="order.created")
