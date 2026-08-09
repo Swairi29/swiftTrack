@@ -1,12 +1,15 @@
 """
 Mock CMS (Client Management System).
-Real CMS = legacy on-prem, SOAP/XML. Unlike the earlier draft, this mock
-actually parses the order XML it receives (client name + addresses) so the
-Saga Worker's CMS call is doing real protocol/data translation, not sending
-a hardcoded stub regardless of input.
+Real CMS = legacy on-prem, SOAP/XML. Parses the real order XML it
+receives (client name + addresses) so the Saga Worker's CMS call is
+doing real protocol/data translation, not sending a hardcoded stub.
+
+Fix applied in this pass: XML parsing now goes through defusedxml
+rather than the standard library's xml.etree.ElementTree, which is
+vulnerable to XXE if the input can ever be influenced by an attacker.
 """
 from flask import Flask, request, Response, jsonify
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET  # hardened against XXE
 
 app = Flask(__name__)
 
@@ -32,8 +35,6 @@ def create_order():
 
 @app.route("/cms/order/cancel", methods=["POST"])
 def cancel_order():
-    # Not called yet this week - the Saga Worker is straight-line for now.
-    # Wired up in Week 3 once compensation is added.
     data = request.get_json(force=True)
     return jsonify({"cancelled": True, "orderId": data.get("orderId")})
 
