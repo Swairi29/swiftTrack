@@ -1,0 +1,11 @@
+.git
+.env
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+README.md
+DOCUMENTATION_BRIEF.md
+PATCH-NOTES.md
+ROADMAP.md

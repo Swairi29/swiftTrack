@@ -77,10 +77,9 @@ flowchart LR
 ## Prerequisites
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (running)
-- Python 3.11+
 - `curl` (or any HTTP client) for the demo commands below
 
-## 1. Start the infrastructure
+## 1. Configure and start the complete stack
 
 First create your local configuration file and replace its demo values:
 
@@ -89,10 +88,10 @@ cp .env.example .env
 ```
 
 ```bash
-docker compose up -d
+docker compose up --build -d
 ```
 
-This brings up:
+This starts every component in its own container:
 
 - **RabbitMQ**: `localhost:5672` (management UI at `localhost:15672`; use the
   credentials in `.env`)
@@ -100,37 +99,28 @@ This brings up:
   `orders`, `idempotency_keys`, and `users` are created automatically from
   `init.sql` **on first start only** (see Troubleshooting if you change the
   schema later).
+- **CMS / ROS / WMS mocks**: `localhost:5001`, `localhost:5002`, and
+  `localhost:6000`
+- **Order Service / Notification Service**: `localhost:5000` and
+  `localhost:5003`
+- **Client Portal**: `http://localhost:8080`
+- **Driver App**: `http://localhost:8081`
 
-## 2. Install dependencies
+Follow the services with:
 
 ```bash
-pip install -r requirements.txt
+docker compose ps
+docker compose logs -f saga-worker
 ```
 
-## 3. Run every service (separate terminals)
+`docker compose up` waits for RabbitMQ and PostgreSQL health checks before
+starting dependent services. No local Python installation or separate service
+terminals are required.
 
-```bash
-python mock-cms/app.py              # http://localhost:5001
-python mock-ros/app.py              # http://localhost:5002
-python mock-wms/server.py           # TCP on localhost:6000
-python order-service/app.py         # http://localhost:5000
-python saga-worker/worker.py        # message consumer, no HTTP port
-python notification-service/app.py  # WebSocket on http://localhost:5003
-```
+## 2. Try it end to end
 
-Wait for RabbitMQ to print `Server startup complete` in `docker logs
-swifttrack-rabbitmq` before starting `saga-worker` and `notification-service`
-— both connect to it at startup and won't retry if it isn't ready yet (see
-Troubleshooting).
-
-Open `client-portal/index.html` in a browser for the client-facing UI, or
-`driver-app/index.html` for the driver-facing UI. Both are plain static
-HTML — no build step, just open the file (or serve it with something like
-VS Code's Live Server extension).
-
-## 4. Try it end to end
-
-**Log in and submit an order**, either through `client-portal/index.html`,
+**Log in and submit an order**, either through the Client Portal at
+`http://localhost:8080`,
 or directly:
 
 ```bash
