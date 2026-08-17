@@ -81,4 +81,4 @@ def health():
 
 if __name__ == "__main__":
     threading.Thread(target=consume_events, daemon=True).start()
-    socketio.run(app, host="0.0.0.0", port=5003, allow_unsafe_werkzeug=True)
+    socketio.run(app, port=5003, allow_unsafe_werkzeug=True)

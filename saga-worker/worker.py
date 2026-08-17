@@ -37,11 +37,11 @@ from db import get_connection
 
 load_dotenv()
 
-CMS_URL = os.environ.get("CMS_URL", "http://localhost:5001/cms/order")
-CMS_CANCEL_URL = os.environ.get("CMS_CANCEL_URL", "http://localhost:5001/cms/order/cancel")
-ROS_URL = os.environ.get("ROS_URL", "http://localhost:5002/routes/optimize")
-WMS_HOST = os.environ.get("WMS_HOST", "localhost")
-WMS_PORT = int(os.environ.get("WMS_PORT", "6000"))
+CMS_URL = "http://localhost:5001/cms/order"
+CMS_CANCEL_URL = "http://localhost:5001/cms/order/cancel"
+ROS_URL = "http://localhost:5002/routes/optimize"
+WMS_HOST = "localhost"
+WMS_PORT = 6000
 
 CMS_USERNAME = os.environ.get("CMS_USERNAME")
 CMS_PASSWORD = os.environ.get("CMS_PASSWORD")

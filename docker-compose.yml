@@ -3,16 +3,11 @@ services:
     image: rabbitmq:3-management
     container_name: swifttrack-rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "5672:5672"    # AMQP port used by all services
+      - "15672:15672"  # Management UI: http://localhost:15672
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
 
   postgres:
     image: postgres:16
@@ -25,135 +20,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
     volumes:
       - swifttrack_pgdata:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-
-  mock-cms:
-    build: .
-    command: python mock-cms/app.py
-    environment:
-      CMS_USERNAME: ${CMS_USERNAME:?Set CMS_USERNAME in .env}
-      CMS_PASSWORD: ${CMS_PASSWORD:?Set CMS_PASSWORD in .env}
-    ports:
-      - "5001:5001"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-
-  mock-ros:
-    build: .
-    command: python mock-ros/app.py
-    environment:
-      ROS_API_KEY: ${ROS_API_KEY:?Set ROS_API_KEY in .env}
-    ports:
-      - "5002:5002"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/health')"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-
-  mock-wms:
-    build: .
-    command: python mock-wms/server.py
-    environment:
-      WMS_AUTH_TOKEN: ${WMS_AUTH_TOKEN:?Set WMS_AUTH_TOKEN in .env}
-    ports:
-      - "6000:6000"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('localhost', 6000), 2); s.close()"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-
-  order-service:
-    build: .
-    command: python order-service/app.py
-    environment: &application-env
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
-      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
-      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env}
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set ALLOWED_ORIGINS in .env}
-      CLIENT_USERNAME: ${CLIENT_USERNAME:?Set CLIENT_USERNAME in .env}
-      CLIENT_PASSWORD: ${CLIENT_PASSWORD:?Set CLIENT_PASSWORD in .env}
-      DRIVER_USERNAME: ${DRIVER_USERNAME:?Set DRIVER_USERNAME in .env}
-      DRIVER_PASSWORD: ${DRIVER_PASSWORD:?Set DRIVER_PASSWORD in .env}
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    ports:
-      - "5000:5000"
-
-  saga-worker:
-    build: .
-    command: python saga-worker/worker.py
-    environment:
-      <<: *application-env
-      CMS_URL: http://mock-cms:5001/cms/order
-      CMS_CANCEL_URL: http://mock-cms:5001/cms/order/cancel
-      ROS_URL: http://mock-ros:5002/routes/optimize
-      WMS_HOST: mock-wms
-      WMS_PORT: 6000
-      CMS_USERNAME: ${CMS_USERNAME:?Set CMS_USERNAME in .env}
-      CMS_PASSWORD: ${CMS_PASSWORD:?Set CMS_PASSWORD in .env}
-      ROS_API_KEY: ${ROS_API_KEY:?Set ROS_API_KEY in .env}
-      WMS_AUTH_TOKEN: ${WMS_AUTH_TOKEN:?Set WMS_AUTH_TOKEN in .env}
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      mock-cms:
-        condition: service_healthy
-      mock-ros:
-        condition: service_healthy
-      mock-wms:
-        condition: service_healthy
-
-  notification-service:
-    build: .
-    command: python notification-service/app.py
-    environment:
-      <<: *application-env
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    ports:
-      - "5003:5003"
-
-  client-portal:
-    build:
-      context: .
-      dockerfile: client-portal/Dockerfile
-    ports:
-      - "8080:80"
-    depends_on:
-      - order-service
-      - notification-service
-
-  driver-app:
-    build:
-      context: .
-      dockerfile: driver-app/Dockerfile
-    ports:
-      - "8081:80"
-    depends_on:
-      - order-service
-      - notification-service
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
 
 volumes:
   swifttrack_pgdata:
