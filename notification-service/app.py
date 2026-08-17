@@ -16,10 +16,11 @@ import json
 import os
 import threading
 
+import jwt
 import pika
 from dotenv import load_dotenv
 from flask import Flask
-from flask_socketio import SocketIO
+from flask_socketio import SocketIO, join_room
 
 load_dotenv()
 
@@ -28,8 +29,26 @@ allowed_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").spli
 socketio = SocketIO(app, cors_allowed_origins=allowed_origins or [], async_mode="threading")
 
 RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.environ.get("RABBITMQ_USER", "swift")
-RABBITMQ_PASSWORD = os.environ.get("RABBITMQ_PASSWORD", "swift123")
+RABBITMQ_USER = os.environ["RABBITMQ_USER"]
+RABBITMQ_PASSWORD = os.environ["RABBITMQ_PASSWORD"]
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY")
+if not JWT_SECRET_KEY:
+    raise RuntimeError("JWT_SECRET_KEY is not set. Copy .env.example to .env and configure it.")
+
+
+@socketio.on("connect")
+def authenticate_socket(auth):
+    token = (auth or {}).get("token")
+    if not token:
+        return False
+    try:
+        claims = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return False
+
+    join_room(f"user:{claims['sub']}")
+    if claims.get("role") == "driver":
+        join_room("role:driver")
 
 def consume_events():
     connection = pika.BlockingConnection(pika.ConnectionParameters(
@@ -45,7 +64,11 @@ def consume_events():
 
     def on_message(ch, method, properties, body):
         event = json.loads(body)
-        socketio.emit("update", {"type": method.routing_key, **event})
+        payload = {"type": method.routing_key, **event}
+        socketio.emit("update", payload, to="role:driver")
+        client_username = event.get("clientUsername")
+        if client_username:
+            socketio.emit("update", payload, to=f"user:{client_username}")
 
     channel.basic_consume(queue=queue_name, on_message_callback=on_message, auto_ack=True)
     channel.start_consuming()

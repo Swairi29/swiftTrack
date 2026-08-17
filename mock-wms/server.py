@@ -6,9 +6,17 @@ newline-delimited JSON: send one JSON line, get one JSON line back.
 import socket
 import threading
 import json
+import hmac
+import os
+
+from dotenv import load_dotenv
 
 HOST = "0.0.0.0"
 PORT = 6000
+load_dotenv()
+WMS_AUTH_TOKEN = os.environ.get("WMS_AUTH_TOKEN")
+if not WMS_AUTH_TOKEN:
+    raise RuntimeError("WMS_AUTH_TOKEN must be set in .env")
 
 
 def handle_client(conn, addr):
@@ -26,6 +34,9 @@ def handle_client(conn, addr):
                 try:
                     msg = json.loads(line)
                 except json.JSONDecodeError:
+                    continue
+                if not hmac.compare_digest(str(msg.get("authToken", "")), WMS_AUTH_TOKEN):
+                    conn.sendall((json.dumps({"status": "ERROR", "message": "WMS authentication failed"}) + "\n").encode("utf-8"))
                     continue
                 if "cancelPackageId" in msg:
                     ack = {"packageId": msg["cancelPackageId"], "status": "CANCELLED"}

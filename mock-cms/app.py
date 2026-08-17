@@ -8,10 +8,30 @@ Fix applied in this pass: XML parsing now goes through defusedxml
 rather than the standard library's xml.etree.ElementTree, which is
 vulnerable to XXE if the input can ever be influenced by an attacker.
 """
+import hmac
+import os
+
+from dotenv import load_dotenv
 from flask import Flask, request, Response, jsonify
 from defusedxml import ElementTree as ET  # hardened against XXE
 
 app = Flask(__name__)
+load_dotenv()
+CMS_USERNAME = os.environ.get("CMS_USERNAME")
+CMS_PASSWORD = os.environ.get("CMS_PASSWORD")
+if not CMS_USERNAME or not CMS_PASSWORD:
+    raise RuntimeError("CMS_USERNAME and CMS_PASSWORD must be set in .env")
+
+
+@app.before_request
+def require_basic_auth():
+    if request.path == "/health":
+        return None
+    auth = request.authorization
+    valid = bool(auth and hmac.compare_digest(auth.username or "", CMS_USERNAME)
+                 and hmac.compare_digest(auth.password or "", CMS_PASSWORD))
+    if not valid:
+        return jsonify({"error": "CMS authentication required"}), 401, {"WWW-Authenticate": 'Basic realm="SwiftTrack CMS"'}
 
 
 @app.route("/cms/order", methods=["POST"])

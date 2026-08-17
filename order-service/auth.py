@@ -10,7 +10,7 @@ from functools import wraps
 
 import jwt
 from dotenv import load_dotenv
-from flask import request, jsonify
+from flask import g, request, jsonify
 
 load_dotenv()
 
@@ -22,13 +22,18 @@ if not SECRET_KEY:
     )
 
 
-def generate_token(username):
+def generate_token(username, role):
     payload = {
         "sub": username,
+        "role": role,
         "iat": datetime.datetime.utcnow(),
         "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=2),
     }
     return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+
+
+def decode_token(token):
+    return jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
 
 
 def require_auth(f):
@@ -39,10 +44,21 @@ def require_auth(f):
             return jsonify({"error": "Missing or malformed Authorization header"}), 401
         token = auth_header.split(" ", 1)[1]
         try:
-            jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+            g.current_user = decode_token(token)
         except jwt.ExpiredSignatureError:
             return jsonify({"error": "Token expired"}), 401
         except jwt.InvalidTokenError:
             return jsonify({"error": "Invalid token"}), 401
         return f(*args, **kwargs)
     return wrapper
+
+
+def require_role(*allowed_roles):
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            if g.current_user.get("role") not in allowed_roles:
+                return jsonify({"error": "You are not authorized for this action"}), 403
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator

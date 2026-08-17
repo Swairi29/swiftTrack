@@ -33,11 +33,11 @@ import uuid
 
 import pika
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify
+from flask import Flask, g, request, jsonify
 from flask_cors import CORS
 
-from auth import generate_token, require_auth
-from db import get_connection
+from auth import generate_token, require_auth, require_role
+from db import authenticate_user, get_connection
 
 load_dotenv()
 
@@ -48,8 +48,8 @@ allowed_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").spli
 CORS(app, origins=allowed_origins or None)  # None here means Flask-CORS default (same-origin only), not "*"
 
 RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.environ.get("RABBITMQ_USER", "swift")
-RABBITMQ_PASSWORD = os.environ.get("RABBITMQ_PASSWORD", "swift123")
+RABBITMQ_USER = os.environ["RABBITMQ_USER"]
+RABBITMQ_PASSWORD = os.environ["RABBITMQ_PASSWORD"]
 
 def publish_event(routing_key, payload):
     connection = pika.BlockingConnection(pika.ConnectionParameters(
@@ -63,15 +63,17 @@ def publish_event(routing_key, payload):
 
 @app.route("/login", methods=["POST"])
 def login():
-    # Mock login - any username/password issues a token.
-    # TODO: replace with real client-portal / driver-app credential checks.
+    # Demo credentials are validated against password hashes in PostgreSQL.
     creds = request.get_json(force=True)
-    username = creds.get("username", "demo-user")
-    return jsonify({"token": generate_token(username)})
+    user = authenticate_user(creds.get("username", ""), creds.get("password", ""))
+    if not user:
+        return jsonify({"error": "Invalid username or password"}), 401
+    return jsonify({"token": generate_token(user["username"], user["role"]), "role": user["role"]})
 
 
 @app.route("/orders", methods=["POST"])
 @require_auth
+@require_role("client")
 def submit_order():
     idempotency_key = request.headers.get("Idempotency-Key")
     if not idempotency_key:
@@ -93,8 +95,10 @@ def submit_order():
         if existing:
             order_id = existing[0]
             with conn.cursor() as cur:
-                cur.execute("SELECT status FROM orders WHERE order_id = %s", (order_id,))
+                cur.execute("SELECT status, client_username FROM orders WHERE order_id = %s", (order_id,))
                 row = cur.fetchone()
+            if row and row[1] != g.current_user["sub"]:
+                return jsonify({"error": "Idempotency key belongs to another client"}), 409
             return jsonify({"orderId": order_id, "status": row[0] if row else "UNKNOWN"}), 202
 
         if not client_name or not addresses:
@@ -105,11 +109,11 @@ def submit_order():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO orders (order_id, client_name, addresses, status)
-                VALUES (%s, %s, %s, 'PENDING')
+                INSERT INTO orders (order_id, client_name, client_username, addresses, status)
+                VALUES (%s, %s, %s, %s, 'PENDING')
                 ON CONFLICT (order_id) DO NOTHING
                 """,
-                (order_id, client_name, json.dumps(addresses)),
+                (order_id, client_name, g.current_user["sub"], json.dumps(addresses)),
             )
             cur.execute(
                 "INSERT INTO idempotency_keys (idempotency_key, order_id) VALUES (%s, %s)",
@@ -120,7 +124,7 @@ def submit_order():
         conn.close()
 
     publish_event("order.created", {
-        "orderId": order_id, "clientName": client_name, "addresses": addresses,
+        "orderId": order_id, "clientName": client_name, "clientUsername": g.current_user["sub"], "addresses": addresses,
     })
 
     return jsonify({"orderId": order_id, "status": "PENDING"}), 202
@@ -133,7 +137,7 @@ def get_order(order_id):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT order_id, status, cms_order_id, wms_package_id, ros_route_id, "
+                "SELECT order_id, client_username, status, cms_order_id, wms_package_id, ros_route_id, "
                 "failed_step, failure_reason, delivery_status, delivery_reason "
                 "FROM orders WHERE order_id = %s",
                 (order_id,),
@@ -145,13 +149,17 @@ def get_order(order_id):
     if not row:
         return jsonify({"error": "not found"}), 404
 
-    keys = ["orderId", "status", "cmsOrderId", "wmsPackageId", "rosRouteId",
+    if g.current_user["role"] == "client" and row[1] != g.current_user["sub"]:
+        return jsonify({"error": "You are not authorized to view this order"}), 403
+
+    keys = ["orderId", "clientUsername", "status", "cmsOrderId", "wmsPackageId", "rosRouteId",
             "failedStep", "failureReason", "deliveryStatus", "deliveryReason"]
     return jsonify(dict(zip(keys, row)))
 
 
 @app.route("/deliveries/<order_id>/status", methods=["POST"])
 @require_auth
+@require_role("driver")
 def update_delivery_status(order_id):
     # Stands in for the driver app marking a package delivered/failed.
     body = request.get_json(force=True)
@@ -166,18 +174,18 @@ def update_delivery_status(order_id):
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE orders SET delivery_status = %s, delivery_reason = %s, "
-                "delivered_at = now(), updated_at = now() WHERE order_id = %s",
+                "delivered_at = now(), updated_at = now() WHERE order_id = %s RETURNING client_username",
                 (status, reason, order_id),
             )
-            updated = cur.rowcount
+            row = cur.fetchone()
         conn.commit()
     finally:
         conn.close()
 
-    if not updated:
+    if not row:
         return jsonify({"error": "order not found"}), 404
 
-    publish_event("delivery.updated", {"orderId": order_id, "status": status, "reason": reason})
+    publish_event("delivery.updated", {"orderId": order_id, "clientUsername": row[0], "status": status, "reason": reason})
 
     return jsonify({"orderId": order_id, "deliveryStatus": status})
 

@@ -43,9 +43,16 @@ ROS_URL = "http://localhost:5002/routes/optimize"
 WMS_HOST = "localhost"
 WMS_PORT = 6000
 
+CMS_USERNAME = os.environ.get("CMS_USERNAME")
+CMS_PASSWORD = os.environ.get("CMS_PASSWORD")
+ROS_API_KEY = os.environ.get("ROS_API_KEY")
+WMS_AUTH_TOKEN = os.environ.get("WMS_AUTH_TOKEN")
+if not all((CMS_USERNAME, CMS_PASSWORD, ROS_API_KEY, WMS_AUTH_TOKEN)):
+    raise RuntimeError("Missing service credentials. Copy .env.example to .env and configure it.")
+
 RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.environ.get("RABBITMQ_USER", "swift")
-RABBITMQ_PASSWORD = os.environ.get("RABBITMQ_PASSWORD", "swift123")
+RABBITMQ_USER = os.environ["RABBITMQ_USER"]
+RABBITMQ_PASSWORD = os.environ["RABBITMQ_PASSWORD"]
 
 # How long a claim is honored before it's considered abandoned (e.g. the
 # worker that took it crashed) and can be re-claimed by a redelivery.
@@ -127,7 +134,7 @@ def update_order(order_id, **fields):
 def call_cms(client_name, addresses):
     address_xml = "".join(f"<Address>{a}</Address>" for a in addresses)
     order_xml = f"<Order><ClientName>{client_name}</ClientName><Addresses>{address_xml}</Addresses></Order>"
-    resp = requests.post(CMS_URL, data=order_xml, headers={"Content-Type": "application/xml"}, timeout=5)
+    resp = requests.post(CMS_URL, data=order_xml, auth=(CMS_USERNAME, CMS_PASSWORD), headers={"Content-Type": "application/xml"}, timeout=5)
     resp.raise_for_status()
     root = ET.fromstring(resp.text)
     return root.findtext("OrderId")
@@ -137,15 +144,18 @@ def compensate_cms(order_id, cms_order_id):
     if not cms_order_id:
         return
     try:
-        requests.post(CMS_CANCEL_URL, json={"orderId": cms_order_id}, timeout=5)
+        requests.post(CMS_CANCEL_URL, json={"orderId": cms_order_id}, auth=(CMS_USERNAME, CMS_PASSWORD), timeout=5)
     except requests.RequestException as e:
         publish_to_dlq({"orderId": order_id, "step": "compensate_cms", "cmsOrderId": cms_order_id, "error": str(e)})
 
 
 def call_wms(order_id, addresses):
     with socket.create_connection((WMS_HOST, WMS_PORT), timeout=5) as s:
-        s.sendall((json.dumps({"orderId": order_id, "packageCount": len(addresses)}) + "\n").encode("utf-8"))
-        return json.loads(s.recv(1024).decode("utf-8"))
+        s.sendall((json.dumps({"authToken": WMS_AUTH_TOKEN, "orderId": order_id, "packageCount": len(addresses)}) + "\n").encode("utf-8"))
+        response = json.loads(s.recv(1024).decode("utf-8"))
+        if response.get("status") == "ERROR":
+            raise OSError(response.get("message", "WMS rejected request"))
+        return response
 
 
 def compensate_wms(order_id, package_id):
@@ -153,7 +163,7 @@ def compensate_wms(order_id, package_id):
         return
     try:
         with socket.create_connection((WMS_HOST, WMS_PORT), timeout=5) as s:
-            s.sendall((json.dumps({"cancelPackageId": package_id}) + "\n").encode("utf-8"))
+            s.sendall((json.dumps({"authToken": WMS_AUTH_TOKEN, "cancelPackageId": package_id}) + "\n").encode("utf-8"))
             s.recv(1024)
     except OSError as e:
         publish_to_dlq({"orderId": order_id, "step": "compensate_wms", "packageId": package_id, "error": str(e)})
@@ -161,7 +171,7 @@ def compensate_wms(order_id, package_id):
 
 @ros_breaker
 def call_ros(addresses):
-    resp = requests.post(ROS_URL, json={"deliveryAddresses": addresses}, timeout=5)
+    resp = requests.post(ROS_URL, json={"deliveryAddresses": addresses}, headers={"X-API-Key": ROS_API_KEY}, timeout=5)
     resp.raise_for_status()
     return resp.json()
 
@@ -202,6 +212,7 @@ def _compensate(order_id, completed):
 def process_order(event):
     order_id = event["orderId"]
     client_name = event["clientName"]
+    client_username = event.get("clientUsername")
     addresses = event["addresses"]
 
     if not claim_order(order_id):
@@ -212,7 +223,7 @@ def process_order(event):
         result = run_saga(order_id, client_name, addresses)
     except SagaFailedError as e:
         update_order(order_id, status="FAILED", failed_step=e.step, failure_reason=e.reason[:200])
-        publish_event("order.failed", {"orderId": order_id, "failedStep": e.step, "reason": e.reason})
+        publish_event("order.failed", {"orderId": order_id, "clientUsername": client_username, "failedStep": e.step, "reason": e.reason})
         return
 
     update_order(
@@ -220,7 +231,7 @@ def process_order(event):
         wms_package_id=result["wms"].get("packageId"), ros_route_id=result["ros"].get("routeId"),
     )
     publish_event("order.completed", {
-        "orderId": order_id, "cmsOrderId": result["cms"], "wms": result["wms"], "ros": result["ros"],
+        "orderId": order_id, "clientUsername": client_username, "cmsOrderId": result["cms"], "wms": result["wms"], "ros": result["ros"],
     })
 
 

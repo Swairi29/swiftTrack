@@ -6,8 +6,8 @@ services:
       - "5672:5672"    # AMQP port used by all services
       - "15672:15672"  # Management UI: http://localhost:15672
     environment:
-      RABBITMQ_DEFAULT_USER: swift
-      RABBITMQ_DEFAULT_PASS: swift123
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
 
   postgres:
     image: postgres:16
@@ -15,9 +15,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: swift
-      POSTGRES_PASSWORD: swift123
-      POSTGRES_DB: swifttrack
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
     volumes:
       - swifttrack_pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql

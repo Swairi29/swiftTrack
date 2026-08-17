@@ -82,16 +82,22 @@ flowchart LR
 
 ## 1. Start the infrastructure
 
+First create your local configuration file and replace its demo values:
+
+```bash
+cp .env.example .env
+```
+
 ```bash
 docker compose up -d
 ```
 
 This brings up:
 
-- **RabbitMQ**: `localhost:5672` (management UI at `localhost:15672`,
-  login `swift` / `swift123`)
-- **PostgreSQL**: `localhost:5432` (`swift` / `swift123`, db `swifttrack`) —
-  `orders` and `idempotency_keys` tables are created automatically from
+- **RabbitMQ**: `localhost:5672` (management UI at `localhost:15672`; use the
+  credentials in `.env`)
+- **PostgreSQL**: `localhost:5432` (credentials and database name from `.env`) —
+  `orders`, `idempotency_keys`, and `users` are created automatically from
   `init.sql` **on first start only** (see Troubleshooting if you change the
   schema later).
 
@@ -128,15 +134,23 @@ VS Code's Live Server extension).
 or directly:
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:5000/login \
+CLIENT_TOKEN=$(curl -s -X POST http://localhost:5000/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"demo"}' | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
+  -d '{"username":"client-demo","password":"change-this-client-password"}' | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
 
 curl -i -X POST http://localhost:5000/orders \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer $CLIENT_TOKEN" \
   -H "Idempotency-Key: demo-key-1" \
   -d '{"clientName": "Kandy Traders", "addresses": ["123 Galle Rd", "45 Duplication Rd"]}'
+```
+
+For the driver-only delivery endpoint, obtain a separate driver token:
+
+```bash
+DRIVER_TOKEN=$(curl -s -X POST http://localhost:5000/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"driver-demo","password":"change-this-driver-password"}' | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
 ```
 
 The response comes back `202` immediately with `"status": "PENDING"` —
@@ -152,7 +166,7 @@ before CMS/WMS/ROS have even been called. A moment later:
 ```bash
 curl -X POST http://localhost:5000/deliveries/<orderId>/status \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer $DRIVER_TOKEN" \
   -d '{"status": "DELIVERED"}'
 ```
 
@@ -167,11 +181,11 @@ terminal).
 **Demo saga compensation + the circuit breaker**:
 
 ```bash
-curl -X POST http://localhost:5002/routes/toggle-failure
+curl -X POST http://localhost:5002/routes/toggle-failure -H "X-API-Key: change-this-ros-api-key"
 
 curl -i -X POST http://localhost:5000/orders \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: Bearer $CLIENT_TOKEN" \
   -H "Idempotency-Key: demo-key-2" \
   -d '{"clientName": "Colombo Mart", "addresses": ["10 Marine Drive"]}'
 ```
@@ -183,18 +197,18 @@ two or three more orders (new `Idempotency-Key` each time) while failure
 mode is still on — a later attempt should trip the circuit breaker, and the
 failure reason will say "circuit breaker open" instead of a raw connection
 error. **Toggle failure mode off again afterwards**
-(`curl -X POST http://localhost:5002/routes/toggle-failure`).
+(`curl -X POST http://localhost:5002/routes/toggle-failure -H "X-API-Key: change-this-ros-api-key"`).
 
 ## API reference
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `POST` | `/login` | — | Any username issues a JWT (prototype auth, no password check) |
-| `POST` | `/orders` | Bearer JWT + `Idempotency-Key` header | Returns `202` immediately |
-| `GET` | `/orders/<id>` | — | No auth on this one yet — see Known limitations |
-| `POST` | `/deliveries/<id>/status` | Bearer JWT | `status` must be `DELIVERED` or `FAILED` |
+| `POST` | `/login` | Username + password | Issues a JWT with the configured client or driver role |
+| `POST` | `/orders` | Client JWT + `Idempotency-Key` header | Returns `202` immediately |
+| `GET` | `/orders/<id>` | JWT | Clients can view only their own orders; drivers can view operational orders |
+| `POST` | `/deliveries/<id>/status` | Driver JWT | `status` must be `DELIVERED` or `FAILED` |
 | `GET` | `/health` | — | On every service |
-| `POST` | `/routes/toggle-failure` | — | mock-ros only, flips simulated ROS outage on/off |
+| `POST` | `/routes/toggle-failure` | ROS API key | mock-ros only, flips simulated ROS outage on/off |
 
 ## Project structure
 
@@ -208,7 +222,7 @@ driver-app/           Driver-facing static UI
 shared/               CSS shared by both UIs
 docker-compose.yml     RabbitMQ + Postgres only — app services run as plain
                        python processes for now (see ROADMAP.md)
-init.sql              Schema: orders, idempotency_keys
+init.sql              Schema: orders, idempotency_keys, users
 ```
 
 ## Known limitations
@@ -216,13 +230,14 @@ init.sql              Schema: orders, idempotency_keys
 This is a prototype built incrementally across a multi-week assignment.
 Current gaps (tracked in more detail in `ROADMAP.md`):
 
-- `GET /orders/<id>` has no auth — anyone can look up any order by
-  guessing/enumerating IDs.
-- The WebSocket has no per-client scoping — every connected browser
-  receives every client's order/delivery events, not just their own.
-- Credentials (`swift`/`swift123`, the JWT `SECRET_KEY`) are hardcoded in
-  `db.py` / `auth.py` / `docker-compose.yml` rather than read from
-  environment variables.
+- Browser connections use JWTs and client events are scoped to the owner;
+  drivers receive the operational manifest. Driver assignment per individual
+  driver is not yet implemented.
+- `.env` is deliberately excluded from Git. `.env.example` contains only
+  replaceable local demo values.
+- CMS uses HTTP Basic Authentication, ROS uses an API key, and the WMS TCP
+  protocol uses a shared service token. These are demonstration controls;
+  production deployment still requires TLS or mTLS/VPN protection.
 - No TLS anywhere (acceptable for local dev; a real deployment would
   terminate TLS at a gateway/load balancer).
 - No retry/backoff on the WMS TCP call, and no automated tests exist yet.
@@ -278,5 +293,5 @@ connects. The real data lives in Postgres regardless; check it with
 docker exec -it swifttrack-postgres psql -U swift -d swifttrack -c "SELECT * FROM orders;"
 ```
 
-Or connect a GUI (DBeaver, pgAdmin, the PostgreSQL VS Code extension) to
-`localhost:5432`, user `swift`, password `swift123`, database `swifttrack`.
+Or connect a GUI (DBeaver, pgAdmin, the PostgreSQL VS Code extension) using
+the PostgreSQL host, user, password, and database values in `.env`.

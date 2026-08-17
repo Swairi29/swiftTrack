@@ -61,11 +61,15 @@
 
     <section class="panel" id="login-panel">
       <h2>Log in</h2>
-      <p class="hint">Same prototype auth as the client portal — folded into the Order Service rather than a separate API Gateway for this build.</p>
+      <p class="hint">Use the configured driver account. Login is protected by a password and JWT.</p>
       <form class="inline-form" id="login-form">
         <div class="field">
           <label for="username">Driver username</label>
           <input id="username" type="text" placeholder="e.g. driver-42" required />
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" type="password" required />
         </div>
         <button type="submit">Log in</button>
       </form>
@@ -89,10 +93,12 @@
 <script>
 const API_BASE = "http://localhost:5000";
 const WS_BASE = "http://localhost:5003";
+let liveSocket = null;
 
 const state = {
   token: localStorage.getItem("swifttrack.token") || null,
   username: localStorage.getItem("swifttrack.username") || null,
+  role: localStorage.getItem("swifttrack.role") || null,
   orders: {}, // orderId -> { orderId, clientName, addresses, orderStatus, deliveryStatus, ros }
 };
 
@@ -122,8 +128,11 @@ function renderSession() {
 function logout() {
   state.token = null;
   state.username = null;
+  state.role = null;
   localStorage.removeItem("swifttrack.token");
   localStorage.removeItem("swifttrack.username");
+  localStorage.removeItem("swifttrack.role");
+  if (liveSocket) liveSocket.disconnect();
   renderSession();
   renderMetrics();
 }
@@ -199,20 +208,25 @@ function applyEvent(data) {
 async function login(event) {
   event.preventDefault();
   const username = el("username").value.trim();
-  if (!username) return;
+  const password = el("password").value;
+  if (!username || !password) return;
   try {
     const resp = await fetch(`${API_BASE}/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username }),
+      body: JSON.stringify({ username, password }),
     });
     if (!resp.ok) throw new Error("Login failed");
     const data = await resp.json();
+    if (data.role !== "driver") throw new Error("Use a driver account in the Driver App");
     state.token = data.token;
     state.username = username;
+    state.role = data.role;
     localStorage.setItem("swifttrack.token", state.token);
     localStorage.setItem("swifttrack.username", username);
+    localStorage.setItem("swifttrack.role", data.role);
     renderSession();
+    connectLiveUpdates();
     showToast(`Welcome, ${username}`);
   } catch (err) {
     showToast(err.message, true);
@@ -242,7 +256,9 @@ async function updateDelivery(orderId, status) {
 }
 
 function connectLiveUpdates() {
-  const socket = io(WS_BASE);
+  if (!state.token) return;
+  if (liveSocket) liveSocket.disconnect();
+  const socket = liveSocket = io(WS_BASE, { auth: { token: state.token } });
   socket.on("connect", () => {
     el("conn-dot").classList.add("live");
     el("driver-pill").textContent = "Live stream connected";
@@ -251,6 +267,7 @@ function connectLiveUpdates() {
     el("conn-dot").classList.remove("live");
     el("driver-pill").textContent = "Reconnecting…";
   });
+  socket.on("connect_error", () => showToast("Live updates require a valid login", true));
   socket.on("update", applyEvent);
 }
 
@@ -259,7 +276,7 @@ el("login-form").addEventListener("submit", login);
 renderSession();
 renderMetrics();
 renderManifest();
-connectLiveUpdates();
+if (state.token && state.role === "driver") connectLiveUpdates();
 </script>
 </body>
 </html>

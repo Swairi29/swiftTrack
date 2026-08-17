@@ -56,11 +56,15 @@
 
     <section class="panel" id="login-panel">
       <h2>Log in</h2>
-      <p class="hint">Prototype auth — any username issues a JWT via <code>POST /login</code>.</p>
+      <p class="hint">Use the configured client account. Login is protected by a password and JWT.</p>
       <form class="inline-form" id="login-form">
         <div class="field">
           <label for="username">Username</label>
           <input id="username" type="text" placeholder="e.g. kandy-traders" required />
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" type="password" required />
         </div>
         <button type="submit">Log in</button>
       </form>
@@ -111,10 +115,12 @@
 <script>
 const API_BASE = "http://localhost:5000";
 const WS_BASE = "http://localhost:5003";
+let liveSocket = null;
 
 const state = {
   token: localStorage.getItem("swifttrack.token") || null,
   username: localStorage.getItem("swifttrack.username") || null,
+  role: localStorage.getItem("swifttrack.role") || null,
   orders: {}, // orderId -> { orderId, clientName, orderStatus, deliveryStatus, lastEvent }
 };
 
@@ -144,8 +150,11 @@ function renderSession() {
 function logout() {
   state.token = null;
   state.username = null;
+  state.role = null;
   localStorage.removeItem("swifttrack.token");
   localStorage.removeItem("swifttrack.username");
+  localStorage.removeItem("swifttrack.role");
+  if (liveSocket) liveSocket.disconnect();
   renderSession();
   renderMetrics();
 }
@@ -212,20 +221,25 @@ function applyEvent(data) {
 async function login(event) {
   event.preventDefault();
   const username = el("username").value.trim();
-  if (!username) return;
+  const password = el("password").value;
+  if (!username || !password) return;
   try {
     const resp = await fetch(`${API_BASE}/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username }),
+      body: JSON.stringify({ username, password }),
     });
     if (!resp.ok) throw new Error("Login failed");
     const data = await resp.json();
+    if (data.role !== "client") throw new Error("Use a client account in the Client Portal");
     state.token = data.token;
     state.username = username;
+    state.role = data.role;
     localStorage.setItem("swifttrack.token", state.token);
     localStorage.setItem("swifttrack.username", username);
+    localStorage.setItem("swifttrack.role", data.role);
     renderSession();
+    connectLiveUpdates();
     showToast(`Welcome, ${username}`);
   } catch (err) {
     showToast(err.message, true);
@@ -263,7 +277,9 @@ async function submitOrder(event) {
 }
 
 function connectLiveUpdates() {
-  const socket = io(WS_BASE);
+  if (!state.token) return;
+  if (liveSocket) liveSocket.disconnect();
+  const socket = liveSocket = io(WS_BASE, { auth: { token: state.token } });
   socket.on("connect", () => {
     el("conn-dot").classList.add("live");
     el("snapshot-pill").textContent = "Live stream connected";
@@ -272,6 +288,7 @@ function connectLiveUpdates() {
     el("conn-dot").classList.remove("live");
     el("snapshot-pill").textContent = "Reconnecting…";
   });
+  socket.on("connect_error", () => showToast("Live updates require a valid login", true));
   socket.on("update", applyEvent);
 }
 
@@ -282,7 +299,7 @@ el("order-search").addEventListener("input", renderRows);
 renderSession();
 renderMetrics();
 renderRows();
-connectLiveUpdates();
+if (state.token && state.role === "client") connectLiveUpdates();
 </script>
 </body>
 </html>

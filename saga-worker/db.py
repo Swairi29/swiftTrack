@@ -11,6 +11,6 @@ def get_connection():
         port=int(os.environ.get("POSTGRES_PORT", "5432")),
         dbname=os.environ.get("POSTGRES_DB", "swifttrack"),
         user=os.environ.get("POSTGRES_USER", "swift"),
-        password=os.environ.get("POSTGRES_PASSWORD", "swift123"),
+        password=os.environ.get("POSTGRES_PASSWORD"),
     )
 

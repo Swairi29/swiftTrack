@@ -3,13 +3,29 @@ Mock ROS (Route Optimisation System).
 Real ROS = modern, cloud-based, RESTful/JSON. Returns a stub optimised route
 built from the real delivery addresses submitted.
 """
-from flask import Flask, request, jsonify
 import random
+import hmac
+import os
+
+from dotenv import load_dotenv
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
+load_dotenv()
+ROS_API_KEY = os.environ.get("ROS_API_KEY")
+if not ROS_API_KEY:
+    raise RuntimeError("ROS_API_KEY must be set in .env")
 # Toggle this on to simulate ROS being down - lets the team demo saga
 # compensation and the circuit breaker without killing the process.
 FAIL_MODE = {"enabled": False}
+
+
+@app.before_request
+def require_api_key():
+    if request.path == "/health":
+        return None
+    if not hmac.compare_digest(request.headers.get("X-API-Key", ""), ROS_API_KEY):
+        return jsonify({"error": "ROS API key required"}), 401
 
 @app.route("/routes/toggle-failure", methods=["POST"])
 def toggle_failure():
