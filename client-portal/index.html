@@ -8,298 +8,129 @@
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 <body>
-  <header class="app-bar">
-    <div class="brand">SwiftTrack <small>Client Portal</small></div>
-    <div class="session" id="session"></div>
-  </header>
-
-  <div class="container">
-    <section class="hero-card panel">
-      <div class="hero-copy">
-        <div class="eyebrow">Operations center</div>
-        <h1>Keep every order visible from checkout to doorstep.</h1>
-        <p>Track new requests, follow live updates, and keep your customers informed without refreshing the page.</p>
-      </div>
-      <div class="hero-actions">
-        <div class="chip live-chip"><span class="conn-dot live"></span>Live stream connected</div>
-        <div class="chip">Secure session view</div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="section-header">
+  <main class="auth-screen" id="auth-screen">
+    <div class="auth-layout">
+      <section class="auth-story">
         <div>
-          <h2>Operational snapshot</h2>
-          <p class="hint">Live totals update as orders and deliveries progress.</p>
+          <div class="eyebrow">SwiftTrack / Client portal</div>
+          <h1>Every shipment, clear from the first click.</h1>
+          <p>Submit delivery orders, follow the live integration flow, and know exactly when each package is ready to move.</p>
         </div>
-        <div class="pill" id="snapshot-pill">All systems ready</div>
-      </div>
-      <div class="metrics-grid">
-        <div class="metric-card">
-          <span class="metric-label">Orders tracked</span>
-          <strong class="metric-value" id="metric-total">0</strong>
+        <div>
+          <div class="flow-dots"><span></span><i></i><span></span><i></i><span></span><i></i><span></span></div>
+          <p class="mono">Order intake / warehouse / route / delivery</p>
         </div>
-        <div class="metric-card">
-          <span class="metric-label">Pending</span>
-          <strong class="metric-value" id="metric-pending">0</strong>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">Confirmed</span>
-          <strong class="metric-value" id="metric-confirmed">0</strong>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">Delivered</span>
-          <strong class="metric-value" id="metric-delivered">0</strong>
-        </div>
-      </div>
-    </section>
+      </section>
+      <section class="auth-card">
+        <div class="eyebrow">Secure access</div>
+        <h2>Welcome back.</h2>
+        <p>Use the configured client account to enter your live order workspace.</p>
+        <form id="login-form">
+          <div class="field"><label for="username">Username</label><input id="username" autocomplete="username" placeholder="client-demo" required /></div>
+          <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" required /></div>
+          <div class="form-actions"><button class="button button-dark" type="submit">Enter portal</button></div>
+        </form>
+      </section>
+    </div>
+  </main>
 
-    <section class="panel" id="login-panel">
-      <h2>Log in</h2>
-      <p class="hint">Use the configured client account. Login is protected by a password and JWT.</p>
-      <form class="inline-form" id="login-form">
-        <div class="field">
-          <label for="username">Username</label>
-          <input id="username" type="text" placeholder="e.g. kandy-traders" required />
-        </div>
-        <div class="field">
-          <label for="password">Password</label>
-          <input id="password" type="password" required />
-        </div>
-        <button type="submit">Log in</button>
-      </form>
-    </section>
+  <div class="app-shell" id="app-shell" hidden>
+    <header class="topbar">
+      <div class="brand">SwiftTrack <small>Client portal</small></div>
+      <nav class="topbar-nav" aria-label="Portal navigation">
+        <button class="nav-link active" data-view="overview">Overview</button>
+        <button class="nav-link" data-view="orders">Orders</button>
+        <button class="nav-link" data-view="new-order">New shipment</button>
+      </nav>
+      <div class="session"><span id="session-name"></span><button class="button button-light button-small" id="logout-btn">Log out</button></div>
+    </header>
 
-    <section class="panel" id="order-panel" hidden>
-      <h2>Submit a new order</h2>
-      <p class="hint">Send a new request into the order service and follow it through dispatching and delivery.</p>
-      <form id="order-form">
-        <div class="inline-form" style="margin-bottom:12px;">
-          <div class="field">
-            <label for="client-name">Client name</label>
-            <input id="client-name" type="text" placeholder="Kandy Traders" required />
+    <main class="app-main">
+      <section class="screen" id="screen-overview">
+        <section class="hero hero-lime">
+          <div class="hero-copy">
+            <div class="eyebrow">Live operations</div>
+            <h1>Your delivery network, in one clear view.</h1>
+            <p>Orders move from request to route planning in the background. Your workspace stays current as each service reports back.</p>
           </div>
-        </div>
-        <div class="field" style="margin-bottom:12px;">
-          <label for="addresses">Delivery addresses <span class="muted">(one per line)</span></label>
-          <textarea id="addresses" placeholder="123 Galle Rd&#10;45 Duplication Rd" required></textarea>
-        </div>
-        <button type="submit" id="submit-order-btn">Submit order</button>
-      </form>
-    </section>
+          <div class="hero-bottom">
+            <div class="signal"><span class="signal-dot" id="live-dot"></span><span id="live-label">Connecting live updates</span></div>
+            <div class="hero-actions"><button class="button button-dark" data-view="new-order">Create shipment</button><button class="button button-light" data-view="orders">View all orders</button></div>
+          </div>
+        </section>
 
-    <section class="panel">
-      <div class="section-header">
-        <div>
-          <h2><span class="conn-dot" id="conn-dot"></span>Your orders</h2>
-          <p class="hint">Live updates arrive as the saga worker and drivers make progress.</p>
-        </div>
-        <div class="field search-field">
-          <label class="sr-only" for="order-search">Search orders</label>
-          <input id="order-search" type="text" placeholder="Search by ID or client" />
-        </div>
-      </div>
-      <table>
-        <thead>
-          <tr><th>Order ID</th><th>Client</th><th>Order status</th><th>Delivery status</th><th>Last event</th></tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
-      <div class="empty-state" id="empty-state">No orders yet — submit one above to see it appear here live.</div>
-    </section>
+        <section class="section">
+          <div class="section-head"><div><div class="eyebrow">At a glance</div><h2>Today, in motion.</h2></div><p>Live counts reflect events received from the order and delivery services.</p></div>
+          <div class="bento">
+            <article class="tile tile-4 tile-lilac"><span class="metric-label">Orders tracked</span><strong class="metric-value" id="metric-total">0</strong><p class="tile-text">Orders received in this live session.</p></article>
+            <article class="tile tile-4 tile-mint"><span class="metric-label">Confirmed</span><strong class="metric-value" id="metric-confirmed">0</strong><p class="tile-text">Cleared by CMS, WMS, and ROS.</p></article>
+            <article class="tile tile-4 tile-cream"><span class="metric-label">In progress</span><strong class="metric-value" id="metric-pending">0</strong><p class="tile-text">Awaiting backend coordination.</p></article>
+            <article class="tile tile-7 tile-navy"><div><div class="eyebrow">Integration flow</div><h3 class="tile-title">The order travels while you keep working.</h3></div><div class="workflow"><div class="workflow-step"><span>1</span><p>Order accepted and stored safely.</p></div><div class="workflow-step"><span>2</span><p>CMS, WMS, and ROS process it asynchronously.</p></div><div class="workflow-step"><span>3</span><p>Status returns instantly to this portal.</p></div></div></article>
+            <article class="tile tile-5 tile-pink"><div><div class="eyebrow">Delivered</div><strong class="metric-value" id="metric-delivered">0</strong></div><p class="tile-text">The final update arrives when your driver completes the delivery.</p></article>
+          </div>
+        </section>
 
+        <section class="section surface">
+          <div class="surface-head"><div><h2>Recent order activity</h2><p>Click an order to inspect its current state.</p></div><button class="button button-dark button-small" data-view="orders">Open orders</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Order</th><th>Client</th><th>Order status</th><th>Delivery</th><th>Latest event</th></tr></thead><tbody id="recent-rows"></tbody></table></div>
+          <div class="empty-state" id="recent-empty">Your live workspace is ready. Create a shipment to watch the service flow appear here.</div>
+        </section>
+      </section>
+
+      <section class="screen" id="screen-orders" hidden>
+        <section class="hero hero-lilac">
+          <div class="hero-copy"><div class="eyebrow">Order workspace</div><h1>Every delivery has a visible story.</h1><p>Search the live orders received in this session and see the exact point where each delivery is now.</p></div>
+          <div class="hero-bottom"><div class="signal"><span class="signal-dot"></span>Live order feed</div><button class="button button-dark" data-view="new-order">Create shipment</button></div>
+        </section>
+        <section class="section surface">
+          <div class="surface-head"><div><h2>All tracked orders</h2><p>Updates appear without refreshing the page.</p></div><input class="search" id="order-search" placeholder="Search order or client" /></div>
+          <div class="table-wrap"><table><thead><tr><th>Order</th><th>Client</th><th>Order status</th><th>Delivery</th><th>Latest event</th></tr></thead><tbody id="all-rows"></tbody></table></div>
+          <div class="empty-state" id="all-empty">No orders match your search yet.</div>
+        </section>
+      </section>
+
+      <section class="screen" id="screen-new-order" hidden>
+        <div class="section-head"><div><div class="eyebrow">New shipment</div><h2>Start a delivery request.</h2></div><p>Your request is accepted immediately, then handled safely by the background workflow.</p></div>
+        <div class="form-layout">
+          <form class="form-panel" id="order-form">
+            <h2>Where should we take it?</h2>
+            <div class="field"><label for="client-name">Client name</label><input id="client-name" placeholder="Kandy Traders" required /></div>
+            <div class="field"><label for="addresses">Delivery addresses</label><textarea id="addresses" placeholder="123 Galle Rd&#10;45 Duplication Rd" required></textarea></div>
+            <div class="form-actions"><button class="button button-dark" id="submit-order-btn" type="submit">Submit shipment</button><button class="button button-light" type="button" data-view="overview">Cancel</button></div>
+          </form>
+          <aside class="form-note"><div class="eyebrow">What happens next</div><h3>Designed for the busy part.</h3><ol><li>Your order is saved as pending.</li><li>SwiftTrack sends it to the connected systems.</li><li>The live feed updates when routing is ready.</li></ol></aside>
+        </div>
+      </section>
+
+      <footer class="app-footer"><div><div class="eyebrow">SwiftTrack</div><p>Live delivery coordination for every shipment.</p></div><div class="mono">Client workspace / secure session</div></footer>
+    </main>
   </div>
-
   <div class="toast" id="toast"></div>
 
 <script>
 const API_BASE = "http://localhost:5000";
 const WS_BASE = "http://localhost:5003";
 let liveSocket = null;
-
-const state = {
-  token: localStorage.getItem("swifttrack.token") || null,
-  username: localStorage.getItem("swifttrack.username") || null,
-  role: localStorage.getItem("swifttrack.role") || null,
-  orders: {}, // orderId -> { orderId, clientName, orderStatus, deliveryStatus, lastEvent }
-};
-
+const state = { token: localStorage.getItem("swifttrack.token") || null, username: localStorage.getItem("swifttrack.username") || null, role: localStorage.getItem("swifttrack.role") || null, orders: {} };
 const el = (id) => document.getElementById(id);
+const screenIds = ["overview", "orders", "new-order"];
 
-function showToast(message, isError) {
-  const t = el("toast");
-  t.textContent = message;
-  t.className = "toast show" + (isError ? " error" : "");
-  setTimeout(() => { t.className = "toast"; }, 3200);
-}
-
-function renderSession() {
-  const session = el("session");
-  if (state.token) {
-    session.innerHTML = `Logged in as <strong>${state.username}</strong> &nbsp; <button class="secondary" id="logout-btn">Log out</button>`;
-    el("logout-btn").addEventListener("click", logout);
-    el("login-panel").hidden = true;
-    el("order-panel").hidden = false;
-  } else {
-    session.innerHTML = "";
-    el("login-panel").hidden = false;
-    el("order-panel").hidden = true;
-  }
-}
-
-function logout() {
-  state.token = null;
-  state.username = null;
-  state.role = null;
-  localStorage.removeItem("swifttrack.token");
-  localStorage.removeItem("swifttrack.username");
-  localStorage.removeItem("swifttrack.role");
-  if (liveSocket) liveSocket.disconnect();
-  renderSession();
-  renderMetrics();
-}
-
-function badge(value) {
-  if (!value) return `<span class="badge dash">-</span>`;
-  return `<span class="badge ${value}">${value}</span>`;
-}
-
-function getFilteredOrders() {
-  const query = (el("order-search")?.value || "").trim().toLowerCase();
-  const orders = Object.values(state.orders).sort((a, b) => (a.orderId < b.orderId ? 1 : -1));
-  if (!query) return orders;
-  return orders.filter((o) => `${o.orderId} ${o.clientName || ""}`.toLowerCase().includes(query));
-}
-
-function renderMetrics() {
-  const total = Object.keys(state.orders).length;
-  const pending = Object.values(state.orders).filter((o) => o.orderStatus === "PENDING").length;
-  const confirmed = Object.values(state.orders).filter((o) => o.orderStatus === "CONFIRMED").length;
-  const delivered = Object.values(state.orders).filter((o) => o.deliveryStatus === "DELIVERED").length;
-
-  el("metric-total").textContent = total;
-  el("metric-pending").textContent = pending;
-  el("metric-confirmed").textContent = confirmed;
-  el("metric-delivered").textContent = delivered;
-  el("snapshot-pill").textContent = total ? `${total} orders in motion` : "All systems ready";
-}
-
-function renderRows() {
-  const tbody = el("rows");
-  const orders = getFilteredOrders();
-  el("empty-state").style.display = orders.length ? "none" : "block";
-  tbody.innerHTML = orders.map((o) => `
-    <tr>
-      <td>${o.orderId}</td>
-      <td>${o.clientName || "-"}</td>
-      <td>${badge(o.orderStatus)}</td>
-      <td>${badge(o.deliveryStatus)}</td>
-      <td class="muted">${o.lastEvent || "-"}</td>
-    </tr>
-  `).join("");
-}
-
-function applyEvent(data) {
-  const id = data.orderId;
-  if (!id) return;
-  if (!state.orders[id]) state.orders[id] = { orderId: id };
-  const o = state.orders[id];
-
-  if (data.type === "order.created") {
-    o.clientName = data.clientName;
-    o.orderStatus = "PENDING";
-  }
-  if (data.type === "order.completed") o.orderStatus = "CONFIRMED";
-  if (data.type === "order.failed") o.orderStatus = "FAILED";
-  if (data.type === "delivery.updated") o.deliveryStatus = data.status;
-
-  o.lastEvent = data.type;
-  renderMetrics();
-  renderRows();
-}
-
-async function login(event) {
-  event.preventDefault();
-  const username = el("username").value.trim();
-  const password = el("password").value;
-  if (!username || !password) return;
-  try {
-    const resp = await fetch(`${API_BASE}/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!resp.ok) throw new Error("Login failed");
-    const data = await resp.json();
-    if (data.role !== "client") throw new Error("Use a client account in the Client Portal");
-    state.token = data.token;
-    state.username = username;
-    state.role = data.role;
-    localStorage.setItem("swifttrack.token", state.token);
-    localStorage.setItem("swifttrack.username", username);
-    localStorage.setItem("swifttrack.role", data.role);
-    renderSession();
-    connectLiveUpdates();
-    showToast(`Welcome, ${username}`);
-  } catch (err) {
-    showToast(err.message, true);
-  }
-}
-
-async function submitOrder(event) {
-  event.preventDefault();
-  const clientName = el("client-name").value.trim();
-  const addresses = el("addresses").value.split("\n").map((a) => a.trim()).filter(Boolean);
-  if (!clientName || addresses.length === 0) return;
-
-  const btn = el("submit-order-btn");
-  btn.disabled = true;
-  try {
-    const resp = await fetch(`${API_BASE}/orders`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${state.token}`,
-        "Idempotency-Key": crypto.randomUUID(),
-      },
-      body: JSON.stringify({ clientName, addresses }),
-    });
-    if (resp.status === 401) { logout(); throw new Error("Session expired, please log in again"); }
-    if (!resp.ok) throw new Error((await resp.json()).error || "Order submission failed");
-    const data = await resp.json();
-    showToast(`Order ${data.orderId} accepted — status: ${data.status}`);
-    el("order-form").reset();
-  } catch (err) {
-    showToast(err.message, true);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function connectLiveUpdates() {
-  if (!state.token) return;
-  if (liveSocket) liveSocket.disconnect();
-  const socket = liveSocket = io(WS_BASE, { auth: { token: state.token } });
-  socket.on("connect", () => {
-    el("conn-dot").classList.add("live");
-    el("snapshot-pill").textContent = "Live stream connected";
-  });
-  socket.on("disconnect", () => {
-    el("conn-dot").classList.remove("live");
-    el("snapshot-pill").textContent = "Reconnecting…";
-  });
-  socket.on("connect_error", () => showToast("Live updates require a valid login", true));
-  socket.on("update", applyEvent);
-}
-
-el("login-form").addEventListener("submit", login);
-el("order-form").addEventListener("submit", submitOrder);
-el("order-search").addEventListener("input", renderRows);
-
-renderSession();
-renderMetrics();
-renderRows();
-if (state.token && state.role === "client") connectLiveUpdates();
+function showToast(message, isError = false) { const toast = el("toast"); toast.textContent = message; toast.className = "toast show" + (isError ? " error" : ""); setTimeout(() => toast.className = "toast", 3200); }
+function badge(value) { return value ? `<span class="badge ${value}">${value}</span>` : '<span class="badge dash">—</span>'; }
+function setView(view) { screenIds.forEach((id) => el(`screen-${id}`).hidden = id !== view); document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === view)); window.scrollTo({ top: 0, behavior: "smooth" }); }
+function logout() { if (liveSocket) liveSocket.disconnect(); Object.assign(state, { token: null, username: null, role: null, orders: {} }); ["token", "username", "role"].forEach((key) => localStorage.removeItem(`swifttrack.${key}`)); el("app-shell").hidden = true; el("auth-screen").hidden = false; }
+function renderSession() { const validClient = state.token && state.role === "client"; el("auth-screen").hidden = validClient; el("app-shell").hidden = !validClient; if (validClient) el("session-name").textContent = state.username; }
+function filteredOrders() { const query = (el("order-search")?.value || "").trim().toLowerCase(); return Object.values(state.orders).filter((order) => !query || `${order.orderId} ${order.clientName || ""}`.toLowerCase().includes(query)).sort((a,b) => b.orderId.localeCompare(a.orderId)); }
+function rows(orders) { return orders.map((order) => `<tr><td><strong>${order.orderId}</strong></td><td>${order.clientName || "—"}</td><td>${badge(order.orderStatus)}</td><td>${badge(order.deliveryStatus)}</td><td>${order.lastEvent || "—"}</td></tr>`).join(""); }
+function renderMetrics() { const all = Object.values(state.orders); el("metric-total").textContent = all.length; el("metric-pending").textContent = all.filter((o) => ["PENDING", "PROCESSING"].includes(o.orderStatus)).length; el("metric-confirmed").textContent = all.filter((o) => o.orderStatus === "CONFIRMED").length; el("metric-delivered").textContent = all.filter((o) => o.deliveryStatus === "DELIVERED").length; }
+function renderOrders() { const all = filteredOrders(); const recent = all.slice(0, 4); el("all-rows").innerHTML = rows(all); el("recent-rows").innerHTML = rows(recent); el("all-empty").style.display = all.length ? "none" : "block"; el("recent-empty").style.display = recent.length ? "none" : "block"; }
+function applyEvent(data) { if (!data.orderId) return; const order = state.orders[data.orderId] ||= { orderId: data.orderId }; if (data.type === "order.created") { order.clientName = data.clientName; order.orderStatus = "PENDING"; } if (data.type === "order.completed") order.orderStatus = "CONFIRMED"; if (data.type === "order.failed") order.orderStatus = "FAILED"; if (data.type === "delivery.updated") order.deliveryStatus = data.status; order.lastEvent = data.type.replace(".", " · "); renderMetrics(); renderOrders(); }
+async function login(event) { event.preventDefault(); const username = el("username").value.trim(); const password = el("password").value; try { const response = await fetch(`${API_BASE}/login`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ username, password }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Login failed"); if (data.role !== "client") throw new Error("Use a client account in the Client Portal"); Object.assign(state, { token: data.token, username, role: data.role }); localStorage.setItem("swifttrack.token", data.token); localStorage.setItem("swifttrack.username", username); localStorage.setItem("swifttrack.role", data.role); renderSession(); connectLiveUpdates(); showToast(`Welcome back, ${username}`); } catch (error) { showToast(error.message, true); } }
+async function submitOrder(event) { event.preventDefault(); const clientName = el("client-name").value.trim(); const addresses = el("addresses").value.split("\n").map((a) => a.trim()).filter(Boolean); const button = el("submit-order-btn"); button.disabled = true; try { const response = await fetch(`${API_BASE}/orders`, { method:"POST", headers: {"Content-Type":"application/json", "Authorization":`Bearer ${state.token}`, "Idempotency-Key":crypto.randomUUID()}, body:JSON.stringify({clientName,addresses}) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Order submission failed"); el("order-form").reset(); setView("overview"); showToast(`Shipment ${data.orderId} is now in motion`); } catch (error) { showToast(error.message, true); } finally { button.disabled = false; } }
+function connectLiveUpdates() { if (liveSocket) liveSocket.disconnect(); liveSocket = io(WS_BASE, { auth: { token: state.token } }); liveSocket.on("connect", () => { el("live-label").textContent = "Live updates connected"; }); liveSocket.on("disconnect", () => { el("live-label").textContent = "Reconnecting live updates"; }); liveSocket.on("connect_error", () => showToast("Live updates require a valid login", true)); liveSocket.on("update", applyEvent); }
+document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+el("login-form").addEventListener("submit", login); el("order-form").addEventListener("submit", submitOrder); el("order-search").addEventListener("input", renderOrders); el("logout-btn").addEventListener("click", logout);
+renderSession(); renderMetrics(); renderOrders(); if (state.token && state.role === "client") connectLiveUpdates();
 </script>
 </body>
 </html>

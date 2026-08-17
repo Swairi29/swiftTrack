@@ -6,277 +6,98 @@
 <title>SwiftTrack — Driver App</title>
 <link rel="stylesheet" href="../shared/style.css" />
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<style>
-  .container { max-width: 760px; }
-  .stop-list { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-muted); }
-  .stop-card { margin: 0 0 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel-strong); }
-</style>
 </head>
 <body>
-  <header class="app-bar">
-    <div class="brand">SwiftTrack <small>Driver App</small></div>
-    <div class="session" id="session"></div>
-  </header>
+  <main class="auth-screen" id="auth-screen">
+    <div class="auth-layout">
+      <section class="auth-story" style="background:var(--coral)">
+        <div><div class="eyebrow">SwiftTrack / Driver app</div><h1>Make every stop feel straightforward.</h1><p>See the route that is ready now, update delivery outcomes in seconds, and keep clients informed as you go.</p></div>
+        <div><div class="flow-dots"><span></span><i></i><span></span><i></i><span></span></div><p class="mono">Manifest / route / delivery proof</p></div>
+      </section>
+      <section class="auth-card">
+        <div class="eyebrow">Driver access</div><h2>Ready when you are.</h2><p>Sign in with the configured driver account to open today’s live delivery workspace.</p>
+        <form id="login-form">
+          <div class="field"><label for="username">Driver username</label><input id="username" autocomplete="username" placeholder="driver-demo" required /></div>
+          <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" required /></div>
+          <div class="form-actions"><button class="button button-dark" type="submit">Open manifest</button></div>
+        </form>
+      </section>
+    </div>
+  </main>
 
-  <div class="container">
-    <section class="hero-card panel">
-      <div class="hero-copy">
-        <div class="eyebrow">Driver command center</div>
-        <h1>Turn confirmed orders into completed stops with a calm, focused workflow.</h1>
-        <p>Review the current route, update delivery outcomes, and keep every stop moving forward.</p>
-      </div>
-      <div class="hero-actions">
-        <div class="chip live-chip"><span class="conn-dot live"></span>Live updates active</div>
-        <div class="chip">Route-ready actions</div>
-      </div>
-    </section>
+  <div class="app-shell" id="app-shell" hidden>
+    <header class="topbar">
+      <div class="brand">SwiftTrack <small>Driver app</small></div>
+      <nav class="topbar-nav" aria-label="Driver navigation"><button class="nav-link active" data-view="route">Today’s route</button><button class="nav-link" data-view="manifest">Manifest</button><button class="nav-link" data-view="proof">Proof of delivery</button></nav>
+      <div class="session"><span id="session-name"></span><button class="button button-light button-small" id="logout-btn">Log out</button></div>
+    </header>
 
-    <section class="panel">
-      <div class="section-header">
-        <div>
-          <h2>Route overview</h2>
-          <p class="hint">This snapshot updates when live events bring in new confirmed orders.</p>
-        </div>
-        <div class="pill" id="driver-pill">Standing by</div>
-      </div>
-      <div class="metrics-grid">
-        <div class="metric-card">
-          <span class="metric-label">Ready to dispatch</span>
-          <strong class="metric-value" id="driver-ready">0</strong>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">Delivered</span>
-          <strong class="metric-value" id="driver-delivered">0</strong>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">Failed</span>
-          <strong class="metric-value" id="driver-failed">0</strong>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">Pending</span>
-          <strong class="metric-value" id="driver-pending">0</strong>
-        </div>
-      </div>
-    </section>
+    <main class="app-main">
+      <section class="screen" id="screen-route">
+        <section class="hero hero-navy">
+          <div class="hero-copy"><div class="eyebrow">Driver command centre</div><h1>Today’s route starts here.</h1><p>Confirmed orders appear as they clear the delivery network. Mark each stop delivered or failed as the day progresses.</p></div>
+          <div class="hero-bottom"><div class="signal"><span class="signal-dot" id="live-dot"></span><span id="live-label">Connecting route updates</span></div><div class="hero-actions"><button class="button button-light" data-view="manifest">Open manifest</button></div></div>
+        </section>
 
-    <section class="panel" id="login-panel">
-      <h2>Log in</h2>
-      <p class="hint">Use the configured driver account. Login is protected by a password and JWT.</p>
-      <form class="inline-form" id="login-form">
-        <div class="field">
-          <label for="username">Driver username</label>
-          <input id="username" type="text" placeholder="e.g. driver-42" required />
-        </div>
-        <div class="field">
-          <label for="password">Password</label>
-          <input id="password" type="password" required />
-        </div>
-        <button type="submit">Log in</button>
-      </form>
-    </section>
+        <section class="section">
+          <div class="section-head"><div><div class="eyebrow">Route overview</div><h2>A calmer way to move.</h2></div><p>These cards update from the live event stream as orders are confirmed and deliveries are completed.</p></div>
+          <div class="bento">
+            <article class="tile tile-4 tile-lime"><span class="metric-label">Ready to dispatch</span><strong class="metric-value" id="metric-ready">0</strong><p class="tile-text">Confirmed stops waiting for action.</p></article>
+            <article class="tile tile-4 tile-mint"><span class="metric-label">Delivered</span><strong class="metric-value" id="metric-delivered">0</strong><p class="tile-text">Stops completed today.</p></article>
+            <article class="tile tile-4 tile-pink"><span class="metric-label">Needs attention</span><strong class="metric-value" id="metric-failed">0</strong><p class="tile-text">Stops marked failed with a reason.</p></article>
+            <article class="tile tile-7 tile-lilac"><div><div class="eyebrow">Next best action</div><h3 class="tile-title" id="next-stop-title">Waiting for the next confirmed stop.</h3></div><p class="tile-text" id="next-stop-copy">Once the order workflow confirms a delivery, it will appear in your manifest automatically.</p><button class="button button-dark button-small" data-view="manifest">Go to manifest</button></article>
+            <article class="tile tile-5 tile-cream"><div class="eyebrow">Live hand-off</div><div class="workflow"><div class="workflow-step"><span>1</span><p>Route confirmed by ROS.</p></div><div class="workflow-step"><span>2</span><p>Driver completes the stop.</p></div><div class="workflow-step"><span>3</span><p>Client sees the update instantly.</p></div></div></article>
+          </div>
+        </section>
+      </section>
 
-    <section class="panel" id="manifest-panel" hidden>
-      <div class="section-header">
-        <div>
-          <h2><span class="conn-dot" id="conn-dot"></span>Today's manifest</h2>
-          <p class="hint">Confirmed orders assigned to this route — mark each stop delivered or failed as you go.</p>
-        </div>
-      </div>
-      <div id="manifest"></div>
-      <div class="empty-state" id="empty-state">No confirmed deliveries yet. Waiting for orders to clear CMS / WMS / ROS…</div>
-    </section>
+      <section class="screen" id="screen-manifest" hidden>
+        <section class="hero hero-lilac">
+          <div class="hero-copy"><div class="eyebrow">Today’s manifest</div><h1>The stops ready for your route.</h1><p>Every confirmed delivery is listed here with its addresses, route estimate, and two clear completion actions.</p></div>
+          <div class="hero-bottom"><div class="signal"><span class="signal-dot"></span>Live manifest feed</div><button class="button button-dark" data-view="route">Route overview</button></div>
+        </section>
+        <section class="section surface">
+          <div class="surface-head"><div><h2>Confirmed stops</h2><p>Use delivered when complete. Use failed only when a delivery cannot be completed.</p></div><div class="mono" id="manifest-count">0 stops</div></div>
+          <div class="manifest" id="manifest"></div>
+          <div class="empty-state" id="manifest-empty">No confirmed deliveries yet. Your manifest will update as orders complete the CMS, WMS, and ROS flow.</div>
+        </section>
+      </section>
 
+      <section class="screen" id="screen-proof" hidden>
+        <div class="section-head"><div><div class="eyebrow">Proof of delivery</div><h2>Capture-ready, for the next iteration.</h2></div><p>This prototype records delivery status and failure reasons. Photo and signature capture are presented here as the designed next step.</p></div>
+        <div class="bento">
+          <article class="tile tile-7 tile-cream"><div><div class="eyebrow">Designed workflow</div><h3 class="tile-title">Confirm the delivery, then attach evidence.</h3></div><div class="workflow"><div class="workflow-step"><span>1</span><p>Open the confirmed stop from the manifest.</p></div><div class="workflow-step"><span>2</span><p>Collect a signature or proof photograph.</p></div><div class="workflow-step"><span>3</span><p>Send the final status to the client portal.</p></div></div></article>
+          <article class="tile tile-5 tile-navy"><div><div class="eyebrow">Prototype scope</div><h3 class="tile-title">Status updates are live today.</h3></div><p class="tile-text">Signature and photo storage needs an upload API and secure object storage before it can be enabled safely.</p></article>
+        </div>
+      </section>
+
+      <footer class="app-footer"><div><div class="eyebrow">SwiftTrack</div><p>Delivery actions that keep the whole network informed.</p></div><div class="mono">Driver workspace / secure session</div></footer>
+    </main>
   </div>
-
   <div class="toast" id="toast"></div>
 
 <script>
 const API_BASE = "http://localhost:5000";
 const WS_BASE = "http://localhost:5003";
 let liveSocket = null;
-
-const state = {
-  token: localStorage.getItem("swifttrack.token") || null,
-  username: localStorage.getItem("swifttrack.username") || null,
-  role: localStorage.getItem("swifttrack.role") || null,
-  orders: {}, // orderId -> { orderId, clientName, addresses, orderStatus, deliveryStatus, ros }
-};
-
+const state = { token: localStorage.getItem("swifttrack.token") || null, username: localStorage.getItem("swifttrack.username") || null, role: localStorage.getItem("swifttrack.role") || null, orders: {} };
 const el = (id) => document.getElementById(id);
+const screenIds = ["route", "manifest", "proof"];
 
-function showToast(message, isError) {
-  const t = el("toast");
-  t.textContent = message;
-  t.className = "toast show" + (isError ? " error" : "");
-  setTimeout(() => { t.className = "toast"; }, 3200);
-}
-
-function renderSession() {
-  const session = el("session");
-  if (state.token) {
-    session.innerHTML = `<strong>${state.username}</strong> &nbsp; <button class="secondary" id="logout-btn">Log out</button>`;
-    el("logout-btn").addEventListener("click", logout);
-    el("login-panel").hidden = true;
-    el("manifest-panel").hidden = false;
-  } else {
-    session.innerHTML = "";
-    el("login-panel").hidden = false;
-    el("manifest-panel").hidden = true;
-  }
-}
-
-function logout() {
-  state.token = null;
-  state.username = null;
-  state.role = null;
-  localStorage.removeItem("swifttrack.token");
-  localStorage.removeItem("swifttrack.username");
-  localStorage.removeItem("swifttrack.role");
-  if (liveSocket) liveSocket.disconnect();
-  renderSession();
-  renderMetrics();
-}
-
-function badge(value) {
-  if (!value) return `<span class="badge dash">-</span>`;
-  return `<span class="badge ${value}">${value}</span>`;
-}
-
-function renderMetrics() {
-  const ready = Object.values(state.orders).filter((o) => o.orderStatus === "CONFIRMED" && !o.deliveryStatus).length;
-  const delivered = Object.values(state.orders).filter((o) => o.deliveryStatus === "DELIVERED").length;
-  const failed = Object.values(state.orders).filter((o) => o.deliveryStatus === "FAILED").length;
-  const pending = Object.values(state.orders).filter((o) => o.orderStatus === "PENDING").length;
-
-  el("driver-ready").textContent = ready;
-  el("driver-delivered").textContent = delivered;
-  el("driver-failed").textContent = failed;
-  el("driver-pending").textContent = pending;
-  el("driver-pill").textContent = ready ? `${ready} stop(s) ready` : "Standing by";
-}
-
-function renderManifest() {
-  const manifest = el("manifest");
-  const stops = Object.values(state.orders)
-    .filter((o) => o.orderStatus === "CONFIRMED" && !o.deliveryStatus)
-    .sort((a, b) => (a.orderId < b.orderId ? -1 : 1));
-
-  el("empty-state").style.display = stops.length ? "none" : "block";
-
-  manifest.innerHTML = stops.map((o) => `
-    <div class="stop-card">
-      <div style="display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap;">
-        <strong>${o.orderId}</strong>
-        <span class="muted">${o.clientName || "-"}</span>
-      </div>
-      ${o.addresses ? `<ul class="stop-list">${o.addresses.map((a) => `<li>${a}</li>`).join("")}</ul>` : ""}
-      ${o.ros ? `<p class="hint" style="margin:6px 0 0;">Route ${o.ros.routeId || "-"} · ~${o.ros.estimatedMinutes ?? "-"} min</p>` : ""}
-      <div class="action-cell" style="margin-top:10px;">
-        <button class="confirm" data-action="DELIVERED" data-order="${o.orderId}">Mark delivered</button>
-        <button class="danger" data-action="FAILED" data-order="${o.orderId}">Mark failed</button>
-      </div>
-    </div>
-  `).join("");
-
-  manifest.querySelectorAll("button[data-action]").forEach((btn) => {
-    btn.addEventListener("click", () => updateDelivery(btn.dataset.order, btn.dataset.action));
-  });
-}
-
-function applyEvent(data) {
-  const id = data.orderId;
-  if (!id) return;
-  if (!state.orders[id]) state.orders[id] = { orderId: id };
-  const o = state.orders[id];
-
-  if (data.type === "order.created") {
-    o.clientName = data.clientName;
-    o.addresses = data.addresses;
-    o.orderStatus = "PENDING";
-  }
-  if (data.type === "order.completed") {
-    o.orderStatus = "CONFIRMED";
-    o.ros = data.ros;
-  }
-  if (data.type === "order.failed") o.orderStatus = "FAILED";
-  if (data.type === "delivery.updated") o.deliveryStatus = data.status;
-
-  renderMetrics();
-  renderManifest();
-}
-
-async function login(event) {
-  event.preventDefault();
-  const username = el("username").value.trim();
-  const password = el("password").value;
-  if (!username || !password) return;
-  try {
-    const resp = await fetch(`${API_BASE}/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!resp.ok) throw new Error("Login failed");
-    const data = await resp.json();
-    if (data.role !== "driver") throw new Error("Use a driver account in the Driver App");
-    state.token = data.token;
-    state.username = username;
-    state.role = data.role;
-    localStorage.setItem("swifttrack.token", state.token);
-    localStorage.setItem("swifttrack.username", username);
-    localStorage.setItem("swifttrack.role", data.role);
-    renderSession();
-    connectLiveUpdates();
-    showToast(`Welcome, ${username}`);
-  } catch (err) {
-    showToast(err.message, true);
-  }
-}
-
-async function updateDelivery(orderId, status) {
-  let reason = null;
-  if (status === "FAILED") {
-    reason = prompt("Reason the delivery failed (e.g. recipient not available):") || "Not specified";
-  }
-  try {
-    const resp = await fetch(`${API_BASE}/deliveries/${orderId}/status`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${state.token}`,
-      },
-      body: JSON.stringify({ status, reason }),
-    });
-    if (resp.status === 401) { logout(); throw new Error("Session expired, please log in again"); }
-    if (!resp.ok) throw new Error((await resp.json()).error || "Update failed");
-    showToast(`${orderId} marked ${status.toLowerCase()}`);
-  } catch (err) {
-    showToast(err.message, true);
-  }
-}
-
-function connectLiveUpdates() {
-  if (!state.token) return;
-  if (liveSocket) liveSocket.disconnect();
-  const socket = liveSocket = io(WS_BASE, { auth: { token: state.token } });
-  socket.on("connect", () => {
-    el("conn-dot").classList.add("live");
-    el("driver-pill").textContent = "Live stream connected";
-  });
-  socket.on("disconnect", () => {
-    el("conn-dot").classList.remove("live");
-    el("driver-pill").textContent = "Reconnecting…";
-  });
-  socket.on("connect_error", () => showToast("Live updates require a valid login", true));
-  socket.on("update", applyEvent);
-}
-
-el("login-form").addEventListener("submit", login);
-
-renderSession();
-renderMetrics();
-renderManifest();
-if (state.token && state.role === "driver") connectLiveUpdates();
+function showToast(message, isError = false) { const toast = el("toast"); toast.textContent = message; toast.className = "toast show" + (isError ? " error" : ""); setTimeout(() => toast.className = "toast", 3200); }
+function setView(view) { screenIds.forEach((id) => el(`screen-${id}`).hidden = id !== view); document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === view)); window.scrollTo({ top: 0, behavior: "smooth" }); }
+function logout() { if (liveSocket) liveSocket.disconnect(); Object.assign(state, { token: null, username: null, role: null, orders: {} }); ["token", "username", "role"].forEach((key) => localStorage.removeItem(`swifttrack.${key}`)); el("app-shell").hidden = true; el("auth-screen").hidden = false; }
+function renderSession() { const validDriver = state.token && state.role === "driver"; el("auth-screen").hidden = validDriver; el("app-shell").hidden = !validDriver; if (validDriver) el("session-name").textContent = state.username; }
+function activeStops() { return Object.values(state.orders).filter((order) => order.orderStatus === "CONFIRMED" && !order.deliveryStatus).sort((a,b) => a.orderId.localeCompare(b.orderId)); }
+function renderMetrics() { const all = Object.values(state.orders); const stops = activeStops(); el("metric-ready").textContent = stops.length; el("metric-delivered").textContent = all.filter((order) => order.deliveryStatus === "DELIVERED").length; el("metric-failed").textContent = all.filter((order) => order.deliveryStatus === "FAILED").length; const next = stops[0]; el("next-stop-title").textContent = next ? `${next.orderId} is ready for delivery.` : "Waiting for the next confirmed stop."; el("next-stop-copy").textContent = next ? `${next.clientName || "Client"} · ${next.addresses?.length || 0} delivery address(es)` : "Once the order workflow confirms a delivery, it will appear in your manifest automatically."; }
+function renderManifest() { const stops = activeStops(); el("manifest-count").textContent = `${stops.length} stop${stops.length === 1 ? "" : "s"}`; el("manifest-empty").style.display = stops.length ? "none" : "block"; el("manifest").innerHTML = stops.map((order) => `<article class="stop-card"><div><div class="stop-meta"><span class="mono">${order.orderId}</span><span>${order.clientName || "Client"}</span>${order.ros ? `<span>Route ${order.ros.routeId || "—"} · ~${order.ros.estimatedMinutes ?? "—"} min</span>` : ""}</div><h3>Ready for the next move.</h3>${order.addresses?.length ? `<ul class="stop-list">${order.addresses.map((address) => `<li>${address}</li>`).join("")}</ul>` : ""}</div><div class="action-cell"><button class="button button-dark button-small" data-action="DELIVERED" data-order="${order.orderId}">Mark delivered</button><button class="button button-danger button-small" data-action="FAILED" data-order="${order.orderId}">Mark failed</button></div></article>`).join(""); document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => updateDelivery(button.dataset.order, button.dataset.action))); }
+function applyEvent(data) { if (!data.orderId) return; const order = state.orders[data.orderId] ||= { orderId: data.orderId }; if (data.type === "order.created") { order.clientName = data.clientName; order.addresses = data.addresses; order.orderStatus = "PENDING"; } if (data.type === "order.completed") { order.orderStatus = "CONFIRMED"; order.ros = data.ros; } if (data.type === "order.failed") order.orderStatus = "FAILED"; if (data.type === "delivery.updated") order.deliveryStatus = data.status; renderMetrics(); renderManifest(); }
+async function login(event) { event.preventDefault(); const username = el("username").value.trim(); const password = el("password").value; try { const response = await fetch(`${API_BASE}/login`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ username, password }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Login failed"); if (data.role !== "driver") throw new Error("Use a driver account in the Driver App"); Object.assign(state, { token: data.token, username, role: data.role }); localStorage.setItem("swifttrack.token", data.token); localStorage.setItem("swifttrack.username", username); localStorage.setItem("swifttrack.role", data.role); renderSession(); connectLiveUpdates(); showToast(`Ready to go, ${username}`); } catch (error) { showToast(error.message, true); } }
+async function updateDelivery(orderId, status) { const reason = status === "FAILED" ? (prompt("Why could this delivery not be completed?") || "Not specified") : null; try { const response = await fetch(`${API_BASE}/deliveries/${orderId}/status`, { method: "POST", headers: {"Content-Type":"application/json", "Authorization":`Bearer ${state.token}`}, body: JSON.stringify({ status, reason }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "Update failed"); showToast(`${orderId} marked ${status.toLowerCase()}`); } catch (error) { showToast(error.message, true); } }
+function connectLiveUpdates() { if (liveSocket) liveSocket.disconnect(); liveSocket = io(WS_BASE, { auth: { token: state.token } }); liveSocket.on("connect", () => el("live-label").textContent = "Route updates connected"); liveSocket.on("disconnect", () => el("live-label").textContent = "Reconnecting route updates"); liveSocket.on("connect_error", () => showToast("Live updates require a valid login", true)); liveSocket.on("update", applyEvent); }
+document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+el("login-form").addEventListener("submit", login); el("logout-btn").addEventListener("click", logout);
+renderSession(); renderMetrics(); renderManifest(); if (state.token && state.role === "driver") connectLiveUpdates();
 </script>
 </body>
 </html>
