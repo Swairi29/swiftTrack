@@ -41,18 +41,18 @@ flowchart LR
     NS -- "WebSocket push" --> DA
 ```
 
-| Component | Role | Protocol it speaks |
-|---|---|---|
-| **Order Service** (`order-service/`) | Thin API: validates, persists `PENDING`, publishes an event, returns `202` immediately. Also handles JWT login and delivery-status updates. | HTTP/JSON |
-| **Saga Worker** (`saga-worker/`) | Separate consumer process. Picks up `order.created`, drives CMS → WMS → ROS in sequence, compensates on failure, updates Postgres. | AMQP consumer |
-| **mock-cms** | Stands in for a legacy on-prem CMS. | XML over HTTP |
-| **mock-ros** | Stands in for a modern cloud route optimiser. | JSON/REST |
-| **mock-wms** | Stands in for a proprietary warehouse protocol. | Newline-delimited JSON over raw TCP |
-| **Notification Service** (`notification-service/`) | Subscribes to all `order.*`/`delivery.*` events, rebroadcasts over WebSocket. | AMQP consumer + Socket.IO |
-| **Client Portal** (`client-portal/index.html`) | Log in, submit orders, watch them go live PENDING → CONFIRMED. | Static HTML/JS |
-| **Driver App** (`driver-app/index.html`) | Log in, see confirmed orders as a manifest, mark delivered/failed. | Static HTML/JS |
-| **RabbitMQ** | Topic exchange (`swifttrack`) decoupling every producer from every consumer. | AMQP |
-| **Postgres** | Source of truth for order/delivery state and idempotency keys. | — |
+| Component                                          | Role                                                                                                                                        | Protocol it speaks                  |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| **Order Service** (`order-service/`)               | Thin API: validates, persists `PENDING`, publishes an event, returns `202` immediately. Also handles JWT login and delivery-status updates. | HTTP/JSON                           |
+| **Saga Worker** (`saga-worker/`)                   | Separate consumer process. Picks up `order.created`, drives CMS → WMS → ROS in sequence, compensates on failure, updates Postgres.          | AMQP consumer                       |
+| **mock-cms**                                       | Stands in for a legacy on-prem CMS.                                                                                                         | XML over HTTP                       |
+| **mock-ros**                                       | Stands in for a modern cloud route optimiser.                                                                                               | JSON/REST                           |
+| **mock-wms**                                       | Stands in for a proprietary warehouse protocol.                                                                                             | Newline-delimited JSON over raw TCP |
+| **Notification Service** (`notification-service/`) | Subscribes to all `order.*`/`delivery.*` events, rebroadcasts over WebSocket.                                                               | AMQP consumer + Socket.IO           |
+| **Client Portal** (`client-portal/index.html`)     | Log in, submit orders, watch them go live PENDING → CONFIRMED.                                                                              | Static HTML/JS                      |
+| **Driver App** (`driver-app/index.html`)           | Log in, see confirmed orders as a manifest, mark delivered/failed.                                                                          | Static HTML/JS                      |
+| **RabbitMQ**                                       | Topic exchange (`swifttrack`) decoupling every producer from every consumer.                                                                | AMQP                                |
+| **Postgres**                                       | Source of truth for order/delivery state and idempotency keys.                                                                              | —                                   |
 
 ## Patterns implemented
 
@@ -189,16 +189,30 @@ failure reason will say "circuit breaker open" instead of a raw connection
 error. **Toggle failure mode off again afterwards**
 (`curl -X POST http://localhost:5002/routes/toggle-failure -H "X-API-Key: change-this-ros-api-key"`).
 
+## Running the tests
+
+A `pytest` suite covers `order-service` (auth/role enforcement, request
+validation, idempotent order submission, order ownership on `GET`, delivery
+status updates) and `saga-worker` (the saga's success path, all three
+compensation paths, and `process_order`'s claim/update/publish control
+flow). Postgres and RabbitMQ are mocked out, so it runs with nothing
+started — no Docker required.
+
+```bash
+pip install -r requirements-test.txt
+pytest
+```
+
 ## API reference
 
-| Method | Path | Auth | Notes |
-|---|---|---|---|
-| `POST` | `/login` | Username + password | Issues a JWT with the configured client or driver role |
-| `POST` | `/orders` | Client JWT + `Idempotency-Key` header | Returns `202` immediately |
-| `GET` | `/orders/<id>` | JWT | Clients can view only their own orders; drivers can view operational orders |
-| `POST` | `/deliveries/<id>/status` | Driver JWT | `status` must be `DELIVERED` or `FAILED` |
-| `GET` | `/health` | — | On every service |
-| `POST` | `/routes/toggle-failure` | ROS API key | mock-ros only, flips simulated ROS outage on/off |
+| Method | Path                      | Auth                                  | Notes                                                                       |
+| ------ | ------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
+| `POST` | `/login`                  | Username + password                   | Issues a JWT with the configured client or driver role                      |
+| `POST` | `/orders`                 | Client JWT + `Idempotency-Key` header | Returns `202` immediately                                                   |
+| `GET`  | `/orders/<id>`            | JWT                                   | Clients can view only their own orders; drivers can view operational orders |
+| `POST` | `/deliveries/<id>/status` | Driver JWT                            | `status` must be `DELIVERED` or `FAILED`                                    |
+| `GET`  | `/health`                 | —                                     | On every service                                                            |
+| `POST` | `/routes/toggle-failure`  | ROS API key                           | mock-ros only, flips simulated ROS outage on/off                            |
 
 ## Project structure
 
@@ -262,7 +276,7 @@ likely wasn't ready yet — just restart them once `docker logs
 swifttrack-rabbitmq` shows `Server startup complete`.
 
 **Changed `init.sql` but Postgres doesn't have the new table/column.**
-Docker only runs `docker-entrypoint-initdb.d` scripts the *first* time a
+Docker only runs `docker-entrypoint-initdb.d` scripts the _first_ time a
 volume is created. If you add a table to `init.sql` after Postgres has
 already been running, apply it manually instead of recreating the volume
 (which would drop existing data):
@@ -273,7 +287,7 @@ docker exec swifttrack-postgres psql -U swift -d swifttrack -c "<your new CREATE
 
 **The client portal / driver app table looks empty after a refresh.** This
 is expected, not a bug — both pages are pure live views with no history:
-they only render events received over the WebSocket *after* the page
+they only render events received over the WebSocket _after_ the page
 connects. The real data lives in Postgres regardless; check it with
 `GET /orders/<id>` or the query below.
 

@@ -104,14 +104,17 @@ two real UIs, both static HTML/JS against the existing APIs, sharing
       just the logged-in client's own — same underlying gap as the
       unscoped WebSocket noted in section 3; worth fixing together
 
-## 5. Testing (currently none)
+## 5. Testing
 
-- [ ] No automated tests exist anywhere in the repo — only manual `curl`
-      steps in the README. At minimum, a handful of `pytest` cases against
-      `order-service` (auth required, idempotency dedupes, validation
-      errors) and an integration test that runs a full order through the
-      saga (success + one compensation path) would substantially
-      de-risk the live demo in the screencast.
+- [x] `tests/` — `pytest` suite (31 tests, all mocked, no Docker needed):
+      `order-service` auth/role enforcement, validation errors, idempotent
+      submission + replay, order ownership on `GET`, delivery status
+      updates; `saga-worker`'s `run_saga()` success path and all three
+      compensation paths (CMS/WMS/ROS failure), plus `process_order`'s
+      claim/update/publish flow. See README's "Running the tests".
+- [ ] Not covered: anything requiring a real Postgres/RabbitMQ (the
+      atomic-claim SQL itself, actual message delivery) — still only
+      manually verified per the README's crash-mid-saga walkthrough.
 
 ## Suggested order of attack (given ~3.5 weeks to 20 Aug)
 
