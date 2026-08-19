@@ -15,6 +15,7 @@ the JWT subject claim, which is a larger change than this security pass.
 import json
 import os
 import threading
+import time
 
 import jwt
 import pika
@@ -50,10 +51,25 @@ def authenticate_socket(auth):
     if claims.get("role") == "driver":
         join_room("role:driver")
 
+def _connect_with_retry():
+    # Same RabbitMQ-not-quite-ready race as saga-worker: this runs in a
+    # background thread at process start, so a crash here would otherwise
+    # leave the container "Up" but silently deaf to every future event.
+    last_error = None
+    for attempt in range(10):
+        try:
+            return pika.BlockingConnection(pika.ConnectionParameters(
+                host=RABBITMQ_HOST, credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
+            ))
+        except pika.exceptions.AMQPConnectionError as e:
+            last_error = e
+            print(f"RabbitMQ not ready yet (attempt {attempt + 1}/10): {e}")
+            time.sleep(3)
+    raise last_error
+
+
 def consume_events():
-    connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host=RABBITMQ_HOST, credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-    ))
+    connection = _connect_with_retry()
     channel = connection.channel()
     channel.exchange_declare(exchange="swifttrack", exchange_type="topic")
 
@@ -81,4 +97,4 @@ def health():
 
 if __name__ == "__main__":
     threading.Thread(target=consume_events, daemon=True).start()
-    socketio.run(app, port=5003, allow_unsafe_werkzeug=True)
+    socketio.run(app, host="0.0.0.0", port=5003, allow_unsafe_werkzeug=True)

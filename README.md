@@ -103,7 +103,9 @@ This starts every component in its own container:
   `localhost:6000`
 - **Order Service / Notification Service**: `localhost:5000` and
   `localhost:5003`
-- **Client Portal**: `http://localhost:8080`
+- **Client Portal**: `http://localhost:8090` (not `:8080` — pick whatever's
+  free on your machine and adjust the port mapping in `docker-compose.yml`
+  and `ALLOWED_ORIGINS` in `.env` if `8090` is already taken)
 - **Driver App**: `http://localhost:8081`
 
 Follow the services with:
@@ -117,10 +119,21 @@ docker compose logs -f saga-worker
 starting dependent services. No local Python installation or separate service
 terminals are required.
 
+**Scaling the Saga Worker** — since it's a competing consumer on a durable
+queue, you can run several instances with no code change:
+
+```bash
+docker compose up -d --scale saga-worker=3
+```
+
+Submit a few orders and each lands on whichever replica RabbitMQ hands it to
+next (`prefetch_count=1` on the queue). Scale back down with
+`docker compose up -d --scale saga-worker=1` when you're done.
+
 ## 2. Try it end to end
 
 **Log in and submit an order**, either through the Client Portal at
-`http://localhost:8080`,
+`http://localhost:8090`,
 or directly:
 
 ```bash
@@ -221,11 +234,14 @@ order-service/       Order API: validation, 202-immediately, auth, idempotency
 saga-worker/          Saga orchestration, compensation, circuit breaker
 mock-cms/, mock-ros/, mock-wms/   Simulated backend systems, one protocol each
 notification-service/ RabbitMQ → WebSocket bridge
-client-portal/        Client-facing static UI
-driver-app/           Driver-facing static UI
+client-portal/        Client-facing static UI (+ Dockerfile, nginx)
+driver-app/            Driver-facing static UI (+ Dockerfile, nginx)
 shared/               CSS shared by both UIs
-docker-compose.yml     RabbitMQ + Postgres only — app services run as plain
-                       python processes for now (see ROADMAP.md)
+tests/                pytest suite — see "Running the tests" above
+Dockerfile             Shared image for the five Python services
+docker-compose.yml     Every service containerized: RabbitMQ, Postgres,
+                       the three mocks, order-service, saga-worker,
+                       notification-service, and both UIs
 init.sql              Schema: orders, idempotency_keys, users
 ```
 
@@ -244,36 +260,24 @@ Current gaps (tracked in more detail in `ROADMAP.md`):
   production deployment still requires TLS or mTLS/VPN protection.
 - No TLS anywhere (acceptable for local dev; a real deployment would
   terminate TLS at a gateway/load balancer).
-- No retry/backoff on the WMS TCP call, and no automated tests exist yet.
-- Only `postgres` and `rabbitmq` are containerized — the app services
-  aren't, so "scale to more instances" isn't demonstrable via Docker yet.
+- No retry/backoff on the WMS TCP call specifically (RabbitMQ connections
+  do retry with backoff — see Troubleshooting below).
 
 ## Troubleshooting
 
-**A duplicate/orphaned service process is silently eating your events.**
-On Windows in particular, stopping a background terminal doesn't always
-kill the Python process it launched. If `notification-service` seems to
-receive events (check its terminal or add a `print` in `on_message`) but
-your browser never gets a live update, check whether more than one process
-is bound to port `5003`:
-
-```powershell
-Get-NetTCPConnection -LocalPort 5003
-Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Select-Object ProcessId, CommandLine
-```
-
-Kill every stale one (`Stop-Process -Id <id> -Force`) and start a single
-fresh instance. This exact issue is why `notification-service` should
-always be (re)started cleanly rather than assumed to still be the same
-process you started an hour ago.
-
-**RabbitMQ takes 20-30 seconds to fully start.** `docker compose up -d`
-returns as soon as the container starts, not once RabbitMQ's AMQP listener
-is actually accepting connections. If `saga-worker` or
-`notification-service` crash immediately with
-`pika.exceptions.IncompatibleProtocolError` or `StreamLostError`, RabbitMQ
-likely wasn't ready yet — just restart them once `docker logs
-swifttrack-rabbitmq` shows `Server startup complete`.
+**RabbitMQ's healthcheck can pass slightly before its AMQP listener is
+actually ready for connections.** `rabbitmq-diagnostics -q ping` (used in
+`docker-compose.yml`'s healthcheck) confirms the node is up, not that the
+AMQP port is accepting new client connections yet — so `saga-worker` and
+`notification-service` can still hit `pika.exceptions.AMQPConnectionError`
+in the few seconds after RabbitMQ reports healthy. Both now retry that
+connection with backoff (up to 10 attempts, 3s apart) instead of crashing,
+so this resolves itself on its own within `docker compose up`; you'll see
+`RabbitMQ not ready yet (attempt N/10)` in `docker compose logs saga-worker`
+if it happens. `order-service` does the same (shorter backoff) around
+`publish_event` on the request path. `restart: unless-stopped` on every
+app service is a second line of defense if a container exits for any other
+reason.
 
 **Changed `init.sql` but Postgres doesn't have the new table/column.**
 Docker only runs `docker-entrypoint-initdb.d` scripts the _first_ time a

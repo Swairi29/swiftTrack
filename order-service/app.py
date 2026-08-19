@@ -29,6 +29,7 @@ the Saga Worker's job, running as its own separate process.
 """
 import json
 import os
+import time
 import uuid
 
 import pika
@@ -52,9 +53,23 @@ RABBITMQ_USER = os.environ["RABBITMQ_USER"]
 RABBITMQ_PASSWORD = os.environ["RABBITMQ_PASSWORD"]
 
 def publish_event(routing_key, payload):
-    connection = pika.BlockingConnection(pika.ConnectionParameters(
-       host=RABBITMQ_HOST, credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-    ))
+    # Guards against the same brief RabbitMQ-not-quite-ready window as the
+    # other services, in case an order is submitted immediately after
+    # startup - short backoff so a real outage still fails fast for the
+    # caller instead of hanging the request.
+    last_error = None
+    connection = None
+    for attempt in range(5):
+        try:
+            connection = pika.BlockingConnection(pika.ConnectionParameters(
+                host=RABBITMQ_HOST, credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
+            ))
+            break
+        except pika.exceptions.AMQPConnectionError as e:
+            last_error = e
+            time.sleep(1)
+    if connection is None:
+        raise last_error
     channel = connection.channel()
     channel.exchange_declare(exchange="swifttrack", exchange_type="topic")
     channel.basic_publish(exchange="swifttrack", routing_key=routing_key, body=json.dumps(payload))
@@ -196,4 +211,4 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(port=5000)
+    app.run(host="0.0.0.0", port=5000)

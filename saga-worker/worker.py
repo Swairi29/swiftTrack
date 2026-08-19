@@ -26,6 +26,7 @@ the migration note in the accompanying README/PR description.
 import json
 import os
 import socket
+import time
 
 import pika
 import pybreaker
@@ -37,11 +38,11 @@ from db import get_connection
 
 load_dotenv()
 
-CMS_URL = "http://localhost:5001/cms/order"
-CMS_CANCEL_URL = "http://localhost:5001/cms/order/cancel"
-ROS_URL = "http://localhost:5002/routes/optimize"
-WMS_HOST = "localhost"
-WMS_PORT = 6000
+CMS_URL = os.environ.get("CMS_URL", "http://localhost:5001/cms/order")
+CMS_CANCEL_URL = os.environ.get("CMS_CANCEL_URL", "http://localhost:5001/cms/order/cancel")
+ROS_URL = os.environ.get("ROS_URL", "http://localhost:5002/routes/optimize")
+WMS_HOST = os.environ.get("WMS_HOST", "localhost")
+WMS_PORT = int(os.environ.get("WMS_PORT", "6000"))
 
 CMS_USERNAME = os.environ.get("CMS_USERNAME")
 CMS_PASSWORD = os.environ.get("CMS_PASSWORD")
@@ -70,10 +71,22 @@ class SagaFailedError(Exception):
 
 
 def _rabbitmq_channel():
-    connection = pika.BlockingConnection(pika.ConnectionParameters(
-        host=RABBITMQ_HOST, credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-    ))
-    return connection, connection.channel()
+    # RabbitMQ's healthcheck (rabbitmq-diagnostics ping) can report the node
+    # up slightly before its AMQP listener is actually ready for new
+    # connections - retry with backoff instead of crashing on that race,
+    # here and at container start.
+    last_error = None
+    for attempt in range(10):
+        try:
+            connection = pika.BlockingConnection(pika.ConnectionParameters(
+                host=RABBITMQ_HOST, credentials=pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
+            ))
+            return connection, connection.channel()
+        except pika.exceptions.AMQPConnectionError as e:
+            last_error = e
+            print(f"RabbitMQ not ready yet (attempt {attempt + 1}/10): {e}")
+            time.sleep(3)
+    raise last_error
 
 
 def publish_event(routing_key, payload):

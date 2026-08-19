@@ -41,16 +41,27 @@ risk since it's ungraded by demo, only by the PDF.
 - [x] Real-time tracking/notifications (WebSocket broadcast)
 - [x] High-volume async processing (202-immediately + queue)
 - [x] Transaction management (Saga compensation in `run_saga()`)
-- [ ] **Scalability** — app services aren't containerized. Only
-      `postgres` and `rabbitmq` are in `docker-compose.yml`; order-service,
-      saga-worker, the three mocks, and notification-service still run as
-      bare `python x.py` processes. At minimum, add a `Dockerfile` per
-      service and bring them into `docker-compose.yml` so the "scale to
-      more instances" story is demonstrable, even if only with
-      `--scale saga-worker=3` on the demo call.
-- [ ] **Resilience** — no retry/backoff on WMS (a dropped TCP connection
-      currently just fails the saga once), and no health-check-based
-      restart policy in compose
+- [x] **Scalability** — every service is now in `docker-compose.yml`
+      (root `Dockerfile` for the five Python services, per-UI Dockerfiles
+      for `client-portal`/`driver-app` on nginx). Verified with
+      `docker compose up --build -d`: full happy-path order, full
+      compensation path (ROS failure), and `docker compose up -d --scale
+      saga-worker=3` — 4 orders submitted, all reached `CONFIRMED`,
+      RabbitMQ's competing-consumers distribution across replicas
+      confirmed structurally via `prefetch_count=1` + manual ack. Note:
+      `client-portal` is mapped to host port `8090`, not `8080` — `8080`
+      was already bound by an unrelated local service.
+- [x] **Resilience, RabbitMQ leg** — `saga-worker`, `notification-service`,
+      and `order-service`'s `publish_event` now retry the RabbitMQ
+      connection with backoff instead of crashing (or, worse,
+      `notification-service`'s case: dying silently in a background thread
+      while the container stayed "Up"). This was a real bug hit while
+      testing containerization — `rabbitmq-diagnostics ping` (the compose
+      healthcheck) can report the RabbitMQ node healthy slightly before its
+      AMQP listener accepts connections. `restart: unless-stopped` added
+      to every app service as a second line of defense.
+- [ ] **Resilience, WMS leg** — still no retry/backoff on the WMS TCP call
+      itself (a dropped connection still just fails the saga once)
 - [ ] Dead-letter handling for compensation calls that themselves fail
       (already flagged as a `# TODO Week 4` in `saga-worker/worker.py`)
 
