@@ -6,6 +6,7 @@ built from the real delivery addresses submitted.
 import random
 import hmac
 import os
+import time
 
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
@@ -18,6 +19,9 @@ if not ROS_API_KEY:
 # Toggle this on to simulate ROS being down - lets the team demo saga
 # compensation and the circuit breaker without killing the process.
 FAIL_MODE = {"enabled": False}
+# A real route-optimisation call wouldn't return in a few milliseconds.
+# Purely so a live demo/screencast can see PENDING 
+SIMULATED_LATENCY_SECONDS = 1.5
 
 
 @app.before_request
@@ -37,6 +41,7 @@ def toggle_failure():
 def optimize_route():
     if FAIL_MODE["enabled"]:
         return jsonify({"error": "ROS temporarily unavailable"}), 503
+    time.sleep(SIMULATED_LATENCY_SECONDS)
     data = request.get_json(force=True)
     stops = data.get("deliveryAddresses", [])
     route_id = f"ROS-{random.randint(1000, 9999)}"

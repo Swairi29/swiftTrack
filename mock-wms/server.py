@@ -8,6 +8,7 @@ import threading
 import json
 import hmac
 import os
+import time
 
 from dotenv import load_dotenv
 
@@ -17,6 +18,10 @@ load_dotenv()
 WMS_AUTH_TOKEN = os.environ.get("WMS_AUTH_TOKEN")
 if not WMS_AUTH_TOKEN:
     raise RuntimeError("WMS_AUTH_TOKEN must be set in .env")
+
+# A real warehouse system wouldn't ack in a few milliseconds. Purely so a
+# live demo/screencast can see PENDING held for a moment
+SIMULATED_LATENCY_SECONDS = 1.0
 
 
 def handle_client(conn, addr):
@@ -41,6 +46,7 @@ def handle_client(conn, addr):
                 if "cancelPackageId" in msg:
                     ack = {"packageId": msg["cancelPackageId"], "status": "CANCELLED"}
                 else:
+                    time.sleep(SIMULATED_LATENCY_SECONDS)
                     package_id = f"WMS-{msg.get('orderId', 'UNKNOWN')}"
                     ack = {"packageId": package_id, "status": "RECEIVED",
                            "packageCount": msg.get("packageCount", 1)}

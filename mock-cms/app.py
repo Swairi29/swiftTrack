@@ -10,6 +10,7 @@ vulnerable to XXE if the input can ever be influenced by an attacker.
 """
 import hmac
 import os
+import time
 
 from dotenv import load_dotenv
 from flask import Flask, request, Response, jsonify
@@ -21,6 +22,11 @@ CMS_USERNAME = os.environ.get("CMS_USERNAME")
 CMS_PASSWORD = os.environ.get("CMS_PASSWORD")
 if not CMS_USERNAME or not CMS_PASSWORD:
     raise RuntimeError("CMS_USERNAME and CMS_PASSWORD must be set in .env")
+
+# A real legacy CMS wouldn't respond in a few milliseconds. This is purely
+# so a live demo/screencast can actually see the order sit at PENDING for
+# a moment instead of the saga completing too fast to watch.
+SIMULATED_LATENCY_SECONDS = 1.0
 
 
 @app.before_request
@@ -43,6 +49,7 @@ def create_order():
     except ET.ParseError:
         return Response("<Error>Malformed order XML</Error>", mimetype="text/xml", status=400)
 
+    time.sleep(SIMULATED_LATENCY_SECONDS)
     order_id = f"CMS-{abs(hash(client_name + str(address_count))) % 100000}"
     response_xml = f"""<?xml version="1.0"?>
 <OrderResponse>

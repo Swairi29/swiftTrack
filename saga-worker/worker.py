@@ -194,17 +194,20 @@ def run_saga(order_id, client_name, addresses):
 
     try:
         completed["cms"] = call_cms(client_name, addresses)
+        print(f"[{order_id}] CMS accepted order -> {completed['cms']}")
     except (requests.RequestException, ET.ParseError) as e:
         raise SagaFailedError("cms", str(e))
 
     try:
         completed["wms"] = call_wms(order_id, addresses)
+        print(f"[{order_id}] WMS received package -> {completed['wms'].get('packageId')}")
     except OSError as e:
         _compensate(order_id, completed)
         raise SagaFailedError("wms", str(e))
 
     try:
         completed["ros"] = call_ros(addresses)
+        print(f"[{order_id}] ROS optimized route -> {completed['ros'].get('routeId')}")
     except pybreaker.CircuitBreakerError:
         _compensate(order_id, completed)
         raise SagaFailedError("ros", "circuit breaker open - ROS has failed repeatedly, giving it a cooldown")
@@ -217,8 +220,10 @@ def run_saga(order_id, client_name, addresses):
 
 def _compensate(order_id, completed):
     if "wms" in completed:
+        print(f"[{order_id}] compensating WMS (packageId={completed['wms'].get('packageId')})")
         compensate_wms(order_id, completed["wms"].get("packageId"))
     if "cms" in completed:
+        print(f"[{order_id}] compensating CMS (orderId={completed['cms']})")
         compensate_cms(order_id, completed["cms"])
 
 
@@ -235,10 +240,12 @@ def process_order(event):
     try:
         result = run_saga(order_id, client_name, addresses)
     except SagaFailedError as e:
+        print(f"[{order_id}] saga FAILED at step '{e.step}': {e.reason}")
         update_order(order_id, status="FAILED", failed_step=e.step, failure_reason=e.reason[:200])
         publish_event("order.failed", {"orderId": order_id, "clientUsername": client_username, "failedStep": e.step, "reason": e.reason})
         return
 
+    print(f"[{order_id}] saga CONFIRMED")
     update_order(
         order_id, status="CONFIRMED", cms_order_id=result["cms"],
         wms_package_id=result["wms"].get("packageId"), ros_route_id=result["ros"].get("routeId"),
