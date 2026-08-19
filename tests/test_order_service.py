@@ -127,6 +127,64 @@ def test_orders_idempotency_key_owned_by_other_client_is_rejected(app_module, cl
     assert resp.status_code == 409
 
 
+# --- GET /orders (history/list) -----------------------------------------
+
+def test_list_orders_requires_auth(client):
+    resp = client.get("/orders")
+    assert resp.status_code == 401
+
+
+def test_list_orders_client_scoped_to_own_orders(app_module, client, monkeypatch):
+    row = ("ORD-1", "Kandy Traders", "alice", ["123 Galle Rd"], "CONFIRMED",
+           "CMS-1", "WMS-1", "ROS-1", None, None, None, None)
+    fake_conn = FakeConnection(fetchall_result=[row])
+    monkeypatch.setattr(app_module, "get_connection", lambda: fake_conn)
+    token = _client_token(app_module, username="alice")
+
+    resp = client.get("/orders", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert len(body) == 1
+    assert body[0]["orderId"] == "ORD-1"
+    assert body[0]["clientUsername"] == "alice"
+    # the query must be scoped to this client, not "all orders"
+    _, params = fake_conn._cursor.executed[0]
+    assert params == ("alice",)
+
+
+def test_list_orders_driver_sees_every_clients_orders(app_module, client, monkeypatch):
+    rows = [
+        ("ORD-1", "Kandy Traders", "alice", ["123 Galle Rd"], "CONFIRMED",
+         "CMS-1", "WMS-1", "ROS-1", None, None, None, None),
+        ("ORD-2", "Colombo Mart", "bob", ["10 Marine Drive"], "PENDING",
+         None, None, None, None, None, None, None),
+    ]
+    fake_conn = FakeConnection(fetchall_result=rows)
+    monkeypatch.setattr(app_module, "get_connection", lambda: fake_conn)
+    token = _driver_token(app_module)
+
+    resp = client.get("/orders", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert {o["orderId"] for o in body} == {"ORD-1", "ORD-2"}
+    # unscoped query for drivers - no per-client filter parameter
+    _, params = fake_conn._cursor.executed[0]
+    assert params is None
+
+
+def test_list_orders_empty_for_new_client(app_module, client, monkeypatch):
+    fake_conn = FakeConnection(fetchall_result=[])
+    monkeypatch.setattr(app_module, "get_connection", lambda: fake_conn)
+    token = _client_token(app_module)
+
+    resp = client.get("/orders", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 200
+    assert resp.get_json() == []
+
+
 # --- GET /orders/<id> ---------------------------------------------------
 
 def test_get_order_requires_auth(client):

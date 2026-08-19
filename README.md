@@ -205,11 +205,12 @@ error. **Toggle failure mode off again afterwards**
 ## Running the tests
 
 A `pytest` suite covers `order-service` (auth/role enforcement, request
-validation, idempotent order submission, order ownership on `GET`, delivery
-status updates) and `saga-worker` (the saga's success path, all three
-compensation paths, and `process_order`'s claim/update/publish control
-flow). Postgres and RabbitMQ are mocked out, so it runs with nothing
-started — no Docker required.
+validation, idempotent order submission, order history/listing and
+ownership scoping on `GET`, delivery status updates) and `saga-worker`
+(the saga's success path, all three compensation paths, and
+`process_order`'s claim/update/publish control flow). Postgres and
+RabbitMQ are mocked out, so it runs with nothing started — no Docker
+required.
 
 ```bash
 pip install -r requirements-test.txt
@@ -222,6 +223,7 @@ pytest
 | ------ | ------------------------- | ------------------------------------- | --------------------------------------------------------------------------- |
 | `POST` | `/login`                  | Username + password                   | Issues a JWT with the configured client or driver role                      |
 | `POST` | `/orders`                 | Client JWT + `Idempotency-Key` header | Returns `202` immediately                                                   |
+| `GET`  | `/orders`                 | JWT                                   | History/list: clients get their own orders, drivers get every order (operational manifest). Used to seed the UI on login. |
 | `GET`  | `/orders/<id>`            | JWT                                   | Clients can view only their own orders; drivers can view operational orders |
 | `POST` | `/deliveries/<id>/status` | Driver JWT                            | `status` must be `DELIVERED` or `FAILED`                                    |
 | `GET`  | `/health`                 | —                                     | On every service                                                            |
@@ -289,11 +291,14 @@ already been running, apply it manually instead of recreating the volume
 docker exec swifttrack-postgres psql -U swift -d swifttrack -c "<your new CREATE TABLE statement>"
 ```
 
-**The client portal / driver app table looks empty after a refresh.** This
-is expected, not a bug — both pages are pure live views with no history:
-they only render events received over the WebSocket _after_ the page
-connects. The real data lives in Postgres regardless; check it with
-`GET /orders/<id>` or the query below.
+**The client portal / driver app table was empty after a refresh — fixed.**
+Both pages used to be pure live views with no history: they only rendered
+events received over the WebSocket _after_ the page connected, so logging
+out and back in showed nothing until you submitted a fresh order. Both UIs
+now call `GET /orders` once on login to seed the table with real history
+before the WebSocket takes over for live updates — see the API reference
+below. The data was always in Postgres regardless; you can still check it
+directly with `GET /orders/<id>` or the query below.
 
 **Inspecting Postgres directly:**
 

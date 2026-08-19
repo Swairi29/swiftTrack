@@ -145,6 +145,36 @@ def submit_order():
     return jsonify({"orderId": order_id, "status": "PENDING"}), 202
 
 
+@app.route("/orders", methods=["GET"])
+@require_auth
+def list_orders():
+    # Seeds the client portal / driver app with history on login - without
+    # this, the UI only ever shows orders/deliveries that happened to
+    # arrive over the WebSocket during the current session (see the
+    # "orders disappear after logout" gap). Clients get their own orders
+    # only; drivers get the operational manifest (all orders), matching
+    # the same scoping already used for the live WebSocket rooms.
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            select = (
+                "SELECT order_id, client_name, client_username, addresses, status, cms_order_id, "
+                "wms_package_id, ros_route_id, failed_step, failure_reason, delivery_status, delivery_reason "
+                "FROM orders "
+            )
+            if g.current_user["role"] == "client":
+                cur.execute(select + "WHERE client_username = %s ORDER BY created_at DESC", (g.current_user["sub"],))
+            else:
+                cur.execute(select + "ORDER BY created_at DESC")
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    keys = ["orderId", "clientName", "clientUsername", "addresses", "status", "cmsOrderId",
+            "wmsPackageId", "rosRouteId", "failedStep", "failureReason", "deliveryStatus", "deliveryReason"]
+    return jsonify([dict(zip(keys, row)) for row in rows])
+
+
 @app.route("/orders/<order_id>", methods=["GET"])
 @require_auth
 def get_order(order_id):
