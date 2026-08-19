@@ -3,6 +3,7 @@
 # ownership on GET, and the delivery-status update. Postgres is replaced
 # with FakeConnection (see helpers.py) and publish_event is mocked out so
 # these run with no RabbitMQ/Postgres and no network calls.
+import datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -136,7 +137,8 @@ def test_list_orders_requires_auth(client):
 
 def test_list_orders_client_scoped_to_own_orders(app_module, client, monkeypatch):
     row = ("ORD-1", "Kandy Traders", "alice", ["123 Galle Rd"], "CONFIRMED",
-           "CMS-1", "WMS-1", "ROS-1", None, None, None, None)
+           "CMS-1", "WMS-1", "ROS-1", None, None, None, None,
+           datetime.datetime(2026, 8, 19, 10, 0, 0))
     fake_conn = FakeConnection(fetchall_result=[row])
     monkeypatch.setattr(app_module, "get_connection", lambda: fake_conn)
     token = _client_token(app_module, username="alice")
@@ -148,17 +150,23 @@ def test_list_orders_client_scoped_to_own_orders(app_module, client, monkeypatch
     assert len(body) == 1
     assert body[0]["orderId"] == "ORD-1"
     assert body[0]["clientUsername"] == "alice"
+    assert body[0]["createdAt"]  # frontend needs this to sort newest-first
     # the query must be scoped to this client, not "all orders"
     _, params = fake_conn._cursor.executed[0]
     assert params == ("alice",)
+    # the SQL itself must order newest-first - the frontend trusts this
+    query, _ = fake_conn._cursor.executed[0]
+    assert "ORDER BY created_at DESC" in query
 
 
 def test_list_orders_driver_sees_every_clients_orders(app_module, client, monkeypatch):
     rows = [
         ("ORD-1", "Kandy Traders", "alice", ["123 Galle Rd"], "CONFIRMED",
-         "CMS-1", "WMS-1", "ROS-1", None, None, None, None),
+         "CMS-1", "WMS-1", "ROS-1", None, None, None, None,
+         datetime.datetime(2026, 8, 19, 10, 0, 0)),
         ("ORD-2", "Colombo Mart", "bob", ["10 Marine Drive"], "PENDING",
-         None, None, None, None, None, None, None),
+         None, None, None, None, None, None, None,
+         datetime.datetime(2026, 8, 19, 10, 5, 0)),
     ]
     fake_conn = FakeConnection(fetchall_result=rows)
     monkeypatch.setattr(app_module, "get_connection", lambda: fake_conn)

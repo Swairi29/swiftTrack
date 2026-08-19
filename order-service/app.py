@@ -159,7 +159,8 @@ def list_orders():
         with conn.cursor() as cur:
             select = (
                 "SELECT order_id, client_name, client_username, addresses, status, cms_order_id, "
-                "wms_package_id, ros_route_id, failed_step, failure_reason, delivery_status, delivery_reason "
+                "wms_package_id, ros_route_id, failed_step, failure_reason, delivery_status, delivery_reason, "
+                "created_at "
                 "FROM orders "
             )
             if g.current_user["role"] == "client":
@@ -171,7 +172,8 @@ def list_orders():
         conn.close()
 
     keys = ["orderId", "clientName", "clientUsername", "addresses", "status", "cmsOrderId",
-            "wmsPackageId", "rosRouteId", "failedStep", "failureReason", "deliveryStatus", "deliveryReason"]
+            "wmsPackageId", "rosRouteId", "failedStep", "failureReason", "deliveryStatus", "deliveryReason",
+            "createdAt"]
     return jsonify([dict(zip(keys, row)) for row in rows])
 
 
